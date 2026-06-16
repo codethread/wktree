@@ -1,0 +1,24 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`post-create scripts generates non-pooled post-create script 1`] = `
+"#!/usr/bin/env bash
+set -euo pipefail
+export WK_ROOT='/tmp/repo'
+export WK_CREATED='/tmp/repo__feature'
+echo 'project: app'
+cd \"$WK_CREATED\"
+echo ready
+"
+`;
+
+exports[`post-create scripts generates pooled post-create script with marker tail 1`] = `
+"#!/usr/bin/env bash
+set -euo pipefail
+export WK_ROOT='/tmp/repo'
+export WK_CREATED='/tmp/repo__feat1'
+echo 'project: app'
+cd \"$WK_CREATED\"
+echo ready
+: > \"$(git -C \"$WK_CREATED\" rev-parse --git-path wk-pool-initialized)\"
+"
+`;

@@ -1,0 +1,28 @@
+{
+	"compilerOptions": {
+		// Core settings
+		"target": "ES2022",
+		"lib": ["ESNext"],
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"moduleDetection": "force",
+		"verbatimModuleSyntax": true,
+		"allowImportingTsExtensions": true,
+
+		// Type checking
+		"strict": true,
+		"skipLibCheck": true,
+		"esModuleInterop": true,
+		"isolatedModules": true,
+		"noEmit": true,
+
+		// Strictness
+		"noFallthroughCasesInSwitch": true,
+		"noImplicitOverride": true,
+		"noUnusedLocals": false,
+		"noUnusedParameters": false,
+		"noPropertyAccessFromIndexSignature": false
+	},
+	"include": ["bin/**/*.ts", "shared/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+	"exclude": ["node_modules", "dist"]
+}
