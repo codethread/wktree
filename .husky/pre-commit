@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+
+# Skip intermediate commits that may intentionally be incomplete.
+git_dir="$(git rev-parse --git-dir)"
+if [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ] || [ -f "$git_dir/CHERRY_PICK_HEAD" ]; then
+	exit 0
+fi
+
+bunx lint-staged
