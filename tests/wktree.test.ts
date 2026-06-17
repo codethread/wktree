@@ -8,6 +8,7 @@ import {
 	readFileSync,
 	realpathSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import {homedir, tmpdir} from "node:os";
@@ -73,7 +74,7 @@ pool_size = 5
 `);
 
 		expect(config.projects).toEqual([
-			{name: "app", root: resolve(homedir(), "work/app"), command: "yarn install", poolSize: 5},
+			{name: "app", root: resolve(homedir(), "work/app"), command: "yarn install", poolSize: 5, copy: []},
 		]);
 	});
 
@@ -85,19 +86,30 @@ command = "echo ready"
 `);
 
 		expect(config.projects).toEqual([
-			{name: "repo", root: resolve("./relative/repo"), command: "echo ready", poolSize: null},
+			{name: "repo", root: resolve("./relative/repo"), command: "echo ready", poolSize: null, copy: []},
 		]);
 	});
 
-	test("rejects present copy field until copy entries are implemented", () => {
-		expect(() =>
+	test("parses string copy entries", () => {
+		expect(
 			parseConfig(`
 [[project]]
 root = "/tmp/repo"
 command = "echo ok"
 copy = [".env"]
+`).projects[0]?.copy,
+		).toEqual([".env"]);
+	});
+
+	test("rejects object-form copy entries until implemented", () => {
+		expect(() =>
+			parseConfig(`
+[[project]]
+root = "/tmp/repo"
+command = "echo ok"
+copy = [{ from = ".env", to = ".env.local" }]
 `),
-		).toThrow("copy` is not implemented yet");
+		).toThrow("object-form copy entries are not implemented yet");
 	});
 
 	test("parses mixed pooled and non-pooled projects", () => {
@@ -130,6 +142,7 @@ future_field = "ignored"
 			root: "/tmp/unknown",
 			command: "echo ok",
 			poolSize: null,
+			copy: [],
 		});
 	});
 
@@ -591,22 +604,166 @@ integrationDescribe("wktree copy", () => {
 		});
 	});
 
-	test("fails loudly through copy command when copy config is present", async () => {
+	test("copies a root-relative file and reports copied JSON", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
-		await run(["git", "-C", root, "branch", "feature/copy-present"]);
-		const worktreePath = `${root}__feature--copy-present`;
-		await run(["git", "-C", root, "worktree", "add", worktreePath, "feature/copy-present"]);
-		const configHome = join(tmp, "config");
-		mkdirSync(join(configHome, "ct-worktrees"), {recursive: true});
-		writeFileSync(
-			join(configHome, "ct-worktrees", "trees.toml"),
-			`[[project]]\nroot = "${root}"\ncommand = "echo ready"\ncopy = [".env"]\n`,
-		);
-		process.env.XDG_CONFIG_HOME = configHome;
+		writeFileSync(join(root, ".env"), "SECRET=one\n");
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env"]\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/copy", "--json"], deps);
+		const worktreePath = `${root}__feature--copy`;
 
-		await expect(dispatch("copy", ["--cwd", worktreePath, "--json"], deps)).rejects.toThrow(
-			"copy` is not implemented yet",
-		);
+		const result = await dispatch("copy", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(readFileSync(join(worktreePath, ".env"), "utf8")).toBe("SECRET=one\n");
+		expect(JSON.parse(result.stdout ?? "{}")).toEqual({
+			kind: "ready",
+			root,
+			worktree_path: worktreePath,
+			copied: [{from: join(root, ".env"), to: ".env", type: "file"}],
+			exclude_paths: [".env"],
+		});
+	});
+
+	test("rerunning copy replaces an untracked destination with current source", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeFileSync(join(root, ".env"), "first\n");
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env"]\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/replace", "--json"], deps);
+		const worktreePath = `${root}__feature--replace`;
+		await dispatch("copy", ["--cwd", worktreePath], deps);
+		writeFileSync(join(root, ".env"), "second\n");
+		writeFileSync(join(worktreePath, ".env"), "local edit\n");
+
+		await dispatch("copy", ["--cwd", worktreePath], deps);
+
+		expect(readFileSync(join(worktreePath, ".env"), "utf8")).toBe("second\n");
+	});
+
+	test("tracked destination blocks with unsafe JSON and leaves file intact", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeFileSync(join(root, "tracked-copy.txt"), "source\n");
+		await run(["git", "-C", root, "add", "tracked-copy.txt"]);
+		await run(["git", "-C", root, "commit", "-m", "add tracked copy"]);
+		await run(["git", "-C", root, "push", "origin", "main"]);
+		writeFileSync(join(root, "tracked-copy.txt"), "new source\n");
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = ["tracked-copy.txt"]\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/tracked-copy", "--json"], deps);
+		const worktreePath = `${root}__feature--tracked-copy`;
+
+		const result = await dispatch("copy", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.UNSAFE);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "unsafe"});
+		expect(readFileSync(join(worktreePath, "tracked-copy.txt"), "utf8")).toBe("source\n");
+	});
+
+	test.each([
+		"",
+		"/tmp/abs",
+		"~/secret",
+		"../escape",
+	])("invalid copy string %p fails as config error without stdout", async (path) => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", `feature/invalid-${path.length}`, "--json"], deps);
+		writeConfig(tmp, root, "echo ready", undefined, `copy = [${JSON.stringify(path)}]\n`);
+
+		await expect(
+			dispatch("copy", ["--cwd", `${root}__feature--invalid-${path.length}`, "--json"], deps),
+		).rejects.toMatchObject({exitCode: EXIT_CODES.USAGE});
+	});
+
+	test("missing source fails as config error without structured stdout", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env.missing"]\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/missing-copy", "--json"], deps);
+
+		await expect(
+			dispatch("copy", ["--cwd", `${root}__feature--missing-copy`, "--json"], deps),
+		).rejects.toMatchObject({
+			message: expect.stringContaining("copy source does not exist"),
+			exitCode: EXIT_CODES.USAGE,
+		});
+	});
+
+	test("symlink source files fail as config errors", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeFileSync(join(root, ".env.real"), "real\n");
+		symlinkSync(".env.real", join(root, ".env.link"));
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env.link"]\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/symlink-source", "--json"], deps);
+
+		await expect(
+			dispatch("copy", ["--cwd", `${root}__feature--symlink-source`, "--json"], deps),
+		).rejects.toMatchObject({
+			message: expect.stringContaining("not a regular file"),
+			exitCode: EXIT_CODES.USAGE,
+		});
+	});
+
+	test("copy preflights all entries before replacing destinations", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeFileSync(join(root, ".env"), "source\n");
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env", ".env.missing"]\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/preflight", "--json"], deps);
+		const worktreePath = `${root}__feature--preflight`;
+		writeFileSync(join(worktreePath, ".env"), "do not replace\n");
+
+		await expect(dispatch("copy", ["--cwd", worktreePath, "--json"], deps)).rejects.toMatchObject({
+			exitCode: EXIT_CODES.USAGE,
+		});
+
+		expect(readFileSync(join(worktreePath, ".env"), "utf8")).toBe("do not replace\n");
+	});
+
+	test("object-form copy entries are rejected clearly", () => {
+		expect(() =>
+			parseConfig(
+				`[[project]]\nroot = "${tmp}"\ncommand = "echo ready"\ncopy = [{ from = ".env", to = ".env" }]\n`,
+			),
+		).toThrow("object-form copy entries are not implemented yet");
+	});
+
+	test("follows symlinked shared exclude path", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		const excludePath = (
+			await run(["git", "-C", root, "rev-parse", "--git-path", "info/exclude"])
+		).stdout.trim();
+		const realExclude = join(tmp, "real-exclude");
+		rmSync(resolve(root, excludePath));
+		symlinkSync(realExclude, resolve(root, excludePath));
+		writeFileSync(realExclude, "*.log\n");
+		writeFileSync(join(root, ".env"), "ignored\n");
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env"]\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/symlink-exclude", "--json"], deps);
+
+		await dispatch("copy", ["--cwd", `${root}__feature--symlink-exclude`], deps);
+
+		expect(readFileSync(realExclude, "utf8")).toBe("*.log\n# wktree-start\n.env\n# wktree-end\n");
+		expect((await run(["test", "-L", resolve(root, excludePath)])).exitCode).toBe(0);
+	});
+
+	test("exclude fence is idempotent, preserves unrelated lines, removes when copy is removed, and ignores copied files", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		const excludePath = (
+			await run(["git", "-C", root, "rev-parse", "--git-path", "info/exclude"])
+		).stdout.trim();
+		writeFileSync(resolve(root, excludePath), "*.log\n");
+		writeFileSync(join(root, ".env"), "ignored\n");
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env"]\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/ignore-copy", "--json"], deps);
+		const worktreePath = `${root}__feature--ignore-copy`;
+		await dispatch("copy", ["--cwd", worktreePath], deps);
+		await dispatch("copy", ["--cwd", worktreePath], deps);
+
+		const withFence = readFileSync(resolve(root, excludePath), "utf8");
+		expect(withFence).toBe("*.log\n# wktree-start\n.env\n# wktree-end\n");
+		expect((await run(["git", "-C", worktreePath, "status", "--porcelain"])).stdout).toBe("");
+
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("copy", ["--cwd", worktreePath], deps);
+
+		expect(readFileSync(resolve(root, excludePath), "utf8")).toBe("*.log\n");
 	});
 });
 
@@ -757,7 +914,7 @@ integrationDescribe("wktree pool status", () => {
 		);
 
 		const state = await buildPoolState(
-			{name: "repo", root, command: "echo ready", poolSize: 2},
+			{name: "repo", root, command: "echo ready", poolSize: 2, copy: []},
 			worktrees,
 			new LiveGitRunner(),
 		);
@@ -1447,13 +1604,15 @@ function testDeps(overrides: Partial<Deps> = {}): Deps {
 	};
 }
 
-function writeConfig(...args: [tmp: string, root: string, command: string, poolSize?: number]) {
-	const [tmp, root, command, poolSize] = args;
+function writeConfig(
+	...args: [tmp: string, root: string, command: string, poolSize?: number, copyToml?: string]
+) {
+	const [tmp, root, command, poolSize, copyToml] = args;
 	const configHome = join(tmp, "config");
 	mkdirSync(join(configHome, "ct-worktrees"), {recursive: true});
 	writeFileSync(
 		join(configHome, "ct-worktrees", "trees.toml"),
-		`[[project]]\nroot = "${root}"\ncommand = '''\n${command}\n'''\n${poolSize ? `pool_size = ${poolSize}\n` : ""}`,
+		`[[project]]\nroot = "${root}"\ncommand = '''\n${command}\n'''\n${poolSize ? `pool_size = ${poolSize}\n` : ""}${copyToml ?? ""}`,
 	);
 	process.env.XDG_CONFIG_HOME = configHome;
 }

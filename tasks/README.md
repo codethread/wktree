@@ -45,3 +45,9 @@ Append notes here. Do not rewrite earlier notes.
 
 - The interim parser rejects any present `copy` field at config-load time with a `ConfigError`; later copy-entry slices should replace this boundary rejection with real parsing.
 - The `copy` skeleton resolves the target from `git worktree list --porcelain` by longest containing path, refuses the canonical root with the existing unsafe blocked JSON path, and emits an empty ready payload for non-canonical worktrees.
+
+### Task 2 implementation notes — 2026-06-17
+
+- String copy entries now parse into file copy operations; object-form entries remain an explicit `ConfigError` for Task 3.
+- Root-relative file copying updates the canonical shared exclude fence on every `wktree copy`, including fence removal when no copy destinations remain.
+- Destination tracked-file checks currently use exact `git ls-files --error-unmatch -- <path>`, which matches this slice's file-only destination contract; Task 3 should revisit descendant overlap for directories.

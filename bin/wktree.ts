@@ -10,15 +10,18 @@
 import {
 	closeSync,
 	existsSync,
+	lstatSync,
+	mkdirSync,
 	mkdtempSync,
 	openSync,
 	readFileSync,
 	readSync,
 	realpathSync,
+	rmSync,
 	writeFileSync,
 } from "node:fs";
 import {homedir, tmpdir} from "node:os";
-import {basename, join, resolve} from "node:path";
+import {basename, dirname, isAbsolute, join, normalize, resolve} from "node:path";
 import {TOML} from "bun";
 import {Command, CommanderError} from "commander";
 import {fzf} from "../shared/fzf";
@@ -37,7 +40,10 @@ export interface ProjectConfig {
 	root: string;
 	command: string;
 	poolSize: number | null;
+	copy: string[];
 }
+
+export type CopiedFile = {from: string; to: string; type: "file"};
 
 export type TreesConfig = {projects: ProjectConfig[]};
 
@@ -506,9 +512,7 @@ function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string
 		throw new ConfigError(`${label}: optional field \`name\` must be a string when present`);
 	}
 
-	if ("copy" in entry) {
-		throw new ConfigError(`${label}: optional field \`copy\` is not implemented yet`);
-	}
+	const copy = parseCopyEntries(entry.copy, label);
 
 	const poolSize = parsePoolSize(entry.pool_size, label);
 	return {
@@ -516,6 +520,7 @@ function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string
 		root,
 		command: commandValue,
 		poolSize,
+		copy,
 	};
 }
 
@@ -980,7 +985,7 @@ async function copyCommand(args: string[], deps: Deps) {
 	const cwd = requireOption(opts, "cwd");
 	const output = parseOutputMode(opts);
 	try {
-		readConfig();
+		const config = readConfig();
 		const worktrees = await listWorktrees(deps.git, cwd);
 		const canonical = worktrees.find((worktree) => worktree.canonical);
 		if (!canonical) throw new WktreeError("couldn't determine canonical worktree");
@@ -989,8 +994,21 @@ async function copyCommand(args: string[], deps: Deps) {
 		if (normalizeExistingPath(target.path) === normalizeExistingPath(canonical.path)) {
 			throw new CanonicalRootError("refusing to copy setup into canonical root");
 		}
+		const project = findProjectForRoot(config, canonical.path);
+		const copied = await runCopySetup({
+			git: deps.git,
+			root: canonical.path,
+			target: target.path,
+			entries: project?.copy ?? [],
+		});
 		return finalizeStructuredResult(
-			{kind: "ready", root: canonical.path, worktree_path: target.path, copied: [], exclude_paths: []},
+			{
+				kind: "ready",
+				root: canonical.path,
+				worktree_path: target.path,
+				copied,
+				exclude_paths: copied.map((entry) => entry.to),
+			},
 			output,
 		);
 	} catch (error) {
@@ -1550,6 +1568,76 @@ function findProjectForRoot(config: TreesConfig, root: string): ProjectConfig | 
 
 function normalizeExistingPath(path: string): string {
 	return existsSync(path) ? realpathSync(path) : path;
+}
+
+function parseCopyEntries(value: unknown, label: string): string[] {
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) throw new ConfigError(`${label}: optional field \`copy\` must be an array`);
+	return value.map((entry, index) => {
+		const entryLabel = `${label}: copy entry ${index + 1}`;
+		if (isRecord(entry))
+			throw new ConfigError(`${entryLabel}: object-form copy entries are not implemented yet`);
+		if (typeof entry !== "string") throw new ConfigError(`${entryLabel}: expected a string path`);
+		return parseRelativeCopyPath(entry, entryLabel);
+	});
+}
+
+function parseRelativeCopyPath(value: string, label: string): string {
+	if (value === "" || value.trim() === "") throw new ConfigError(`${label}: copy path must not be empty`);
+	if (isAbsolute(value)) throw new ConfigError(`${label}: copy path must be relative, not absolute`);
+	if (value === "~" || value.startsWith("~/"))
+		throw new ConfigError(`${label}: copy path must be relative, not start with ~`);
+	const normalized = normalize(value);
+	if (normalized === "." || normalized === ".." || normalized.startsWith("../") || isAbsolute(normalized)) {
+		throw new ConfigError(`${label}: copy path must stay within the worktree`);
+	}
+	return normalized;
+}
+
+async function runCopySetup(options: {
+	git: GitRunner;
+	root: string;
+	target: string;
+	entries: string[];
+}): Promise<CopiedFile[]> {
+	const {git, root, target, entries} = options;
+	const paths = [...entries].sort();
+	const plans = [];
+	for (const path of paths) {
+		const source = resolve(root, path);
+		const destination = resolve(target, path);
+		if (!existsSync(source)) throw new ConfigError(`copy source does not exist: ${path}`);
+		if (!lstatSync(source).isFile()) throw new ConfigError(`copy source is not a regular file: ${path}`);
+		await assertDestinationUntracked(git, target, path);
+		plans.push({path, source, destination});
+	}
+	for (const plan of plans) {
+		mkdirSync(dirname(plan.destination), {recursive: true});
+		if (existsSync(plan.destination)) rmSync(plan.destination, {recursive: true, force: true});
+		writeFileSync(plan.destination, readFileSync(plan.source));
+	}
+	await writeCopyExcludeBlock(git, root, paths);
+	return plans.map((plan) => ({from: plan.source, to: plan.path, type: "file"}));
+}
+
+async function assertDestinationUntracked(git: GitRunner, target: string, path: string): Promise<void> {
+	const tracked = await git.runRaw(["-C", target, "ls-files", "--error-unmatch", "--", path]);
+	if (tracked.exitCode === 0) throw new UnsafeOperationError(`copy destination is tracked by git: ${path}`);
+}
+
+async function writeCopyExcludeBlock(git: GitRunner, root: string, paths: string[]): Promise<void> {
+	const excludePathResult = await git.run(["-C", root, "rev-parse", "--git-path", "info/exclude"]);
+	const gitPath = resolve(root, excludePathResult.stdout.trim());
+	const excludePath = existsSync(gitPath) ? realpathSync(gitPath) : gitPath;
+	mkdirSync(dirname(excludePath), {recursive: true});
+	const current = existsSync(excludePath) ? readFileSync(excludePath, "utf8") : "";
+	const withoutFence = current.replace(/(?:^|\n)# wktree-start\n[\s\S]*?\n# wktree-end\n?/g, (match) =>
+		match.startsWith("\n") ? "\n" : "",
+	);
+	const uniquePaths = [...new Set(paths)].sort();
+	const nextBlock = uniquePaths.length > 0 ? `# wktree-start\n${uniquePaths.join("\n")}\n# wktree-end\n` : "";
+	const separator = withoutFence !== "" && !withoutFence.endsWith("\n") && nextBlock !== "" ? "\n" : "";
+	writeFileSync(excludePath, `${withoutFence}${separator}${nextBlock}`);
 }
 
 function parsePoolSize(value: unknown, label: string): number | null {

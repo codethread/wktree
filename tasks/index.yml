@@ -7,7 +7,7 @@ tasks:
   - id: 2
     description: Copy root-relative file entries
     task_file: tasks/002-copy-root-relative-file-entries.md
-    status: pending
+    status: complete
     blocked_by: [1]
   - id: 3
     description: Copy object and directory entries
