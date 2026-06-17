@@ -23,7 +23,7 @@
 		"**/*.{json,ts}": "biome check --write --no-errors-on-unmatched",
 		"**/*.nu": [
 			"nufmt",
-			"sh -c 'for file do nu -c \"nu-check --debug --as-module $(pwd)/$file\"; done' --"
+			"sh -c 'for file do nu -c \"nu-check --debug --as-module $file\"; done' --"
 		]
 	}
 }
