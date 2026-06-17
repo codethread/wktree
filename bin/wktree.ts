@@ -1615,7 +1615,7 @@ function parseCopyDestinations(value: unknown, label: string): string[] {
 }
 
 function parseRelativeCopyPath(value: string, label: string): string {
-	if (value === "" || value.trim() === "") throw new ConfigError(`${label}: copy path must not be empty`);
+	if (value.trim() === "") throw new ConfigError(`${label}: copy path must not be empty`);
 	if (isAbsolute(value)) throw new ConfigError(`${label}: copy path must be relative, not absolute`);
 	if (value.startsWith("~")) throw new ConfigError(`${label}: copy path must be relative, not start with ~`);
 	const normalized = normalize(value);
@@ -1626,10 +1626,7 @@ function parseRelativeCopyPath(value: string, label: string): string {
 }
 
 function resolveCopySource(root: string, from: string): string {
-	if (from === "~") return homedir();
-	if (from.startsWith("~/")) return resolve(homedir(), from.slice(2));
-	if (isAbsolute(from)) return from;
-	return resolve(root, from);
+	return expandLeadingHome(from) ?? (isAbsolute(from) ? from : resolve(root, from));
 }
 
 async function runCopySetup(options: {
@@ -1706,9 +1703,13 @@ function parsePoolSize(value: unknown, label: string): number | null {
 }
 
 function expandPath(path: string): string {
+	return expandLeadingHome(path) ?? resolve(path);
+}
+
+function expandLeadingHome(path: string): string | null {
 	if (path === "~") return homedir();
 	if (path.startsWith("~/")) return resolve(homedir(), path.slice(2));
-	return resolve(path);
+	return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
