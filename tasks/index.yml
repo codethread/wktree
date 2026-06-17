@@ -12,7 +12,7 @@ tasks:
   - id: 3
     description: Copy object and directory entries
     task_file: tasks/003-copy-object-and-directory-entries.md
-    status: pending
+    status: complete
     blocked_by: [2]
   - id: 4
     description: Integrate copy with worktree setup

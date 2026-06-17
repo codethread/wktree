@@ -9,6 +9,7 @@
 
 import {
 	closeSync,
+	cpSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
@@ -40,10 +41,11 @@ export interface ProjectConfig {
 	root: string;
 	command: string;
 	poolSize: number | null;
-	copy: string[];
+	copy: CopyEntry[];
 }
 
-export type CopiedFile = {from: string; to: string; type: "file"};
+export type CopyEntry = {from: string; to: string[]};
+export type CopiedFile = {from: string; to: string; type: "file" | "directory"};
 
 export type TreesConfig = {projects: ProjectConfig[]};
 
@@ -1007,7 +1009,7 @@ async function copyCommand(args: string[], deps: Deps) {
 				root: canonical.path,
 				worktree_path: target.path,
 				copied,
-				exclude_paths: copied.map((entry) => entry.to),
+				exclude_paths: [...new Set(copied.map((entry) => entry.to))].sort(),
 			},
 			output,
 		);
@@ -1570,23 +1572,40 @@ function normalizeExistingPath(path: string): string {
 	return existsSync(path) ? realpathSync(path) : path;
 }
 
-function parseCopyEntries(value: unknown, label: string): string[] {
+function parseCopyEntries(value: unknown, label: string): CopyEntry[] {
 	if (value === undefined) return [];
 	if (!Array.isArray(value)) throw new ConfigError(`${label}: optional field \`copy\` must be an array`);
 	return value.map((entry, index) => {
 		const entryLabel = `${label}: copy entry ${index + 1}`;
-		if (isRecord(entry))
-			throw new ConfigError(`${entryLabel}: object-form copy entries are not implemented yet`);
+		if (isRecord(entry)) {
+			if (typeof entry.from !== "string" || entry.from.trim() === "") {
+				throw new ConfigError(`${entryLabel}: required field \`from\` is missing or empty`);
+			}
+			return {from: entry.from, to: parseCopyDestinations(entry.to, entryLabel)};
+		}
 		if (typeof entry !== "string") throw new ConfigError(`${entryLabel}: expected a string path`);
-		return parseRelativeCopyPath(entry, entryLabel);
+		const path = parseRelativeCopyPath(entry, entryLabel);
+		return {from: path, to: [path]};
 	});
+}
+
+function parseCopyDestinations(value: unknown, label: string): string[] {
+	if (typeof value === "string") return [parseRelativeCopyPath(value, `${label}: to`)];
+	if (Array.isArray(value)) {
+		if (value.length === 0) throw new ConfigError(`${label}: \`to\` array must not be empty`);
+		return value.map((entry, index) => {
+			if (typeof entry !== "string")
+				throw new ConfigError(`${label}: to entry ${index + 1} must be a string`);
+			return parseRelativeCopyPath(entry, `${label}: to entry ${index + 1}`);
+		});
+	}
+	throw new ConfigError(`${label}: required field \`to\` is missing`);
 }
 
 function parseRelativeCopyPath(value: string, label: string): string {
 	if (value === "" || value.trim() === "") throw new ConfigError(`${label}: copy path must not be empty`);
 	if (isAbsolute(value)) throw new ConfigError(`${label}: copy path must be relative, not absolute`);
-	if (value === "~" || value.startsWith("~/"))
-		throw new ConfigError(`${label}: copy path must be relative, not start with ~`);
+	if (value.startsWith("~")) throw new ConfigError(`${label}: copy path must be relative, not start with ~`);
 	const normalized = normalize(value);
 	if (normalized === "." || normalized === ".." || normalized.startsWith("../") || isAbsolute(normalized)) {
 		throw new ConfigError(`${label}: copy path must stay within the worktree`);
@@ -1594,35 +1613,59 @@ function parseRelativeCopyPath(value: string, label: string): string {
 	return normalized;
 }
 
+function resolveCopySource(root: string, from: string): string {
+	if (from === "~") return homedir();
+	if (from.startsWith("~/")) return resolve(homedir(), from.slice(2));
+	if (isAbsolute(from)) return from;
+	return resolve(root, from);
+}
+
 async function runCopySetup(options: {
 	git: GitRunner;
 	root: string;
 	target: string;
-	entries: string[];
+	entries: CopyEntry[];
 }): Promise<CopiedFile[]> {
 	const {git, root, target, entries} = options;
-	const paths = [...entries].sort();
-	const plans = [];
-	for (const path of paths) {
-		const source = resolve(root, path);
-		const destination = resolve(target, path);
-		if (!existsSync(source)) throw new ConfigError(`copy source does not exist: ${path}`);
-		if (!lstatSync(source).isFile()) throw new ConfigError(`copy source is not a regular file: ${path}`);
-		await assertDestinationUntracked(git, target, path);
-		plans.push({path, source, destination});
+	const plans: Array<{source: string; to: string; destination: string; type: "file" | "directory"}> = [];
+	for (const entry of entries) {
+		const source = resolveCopySource(root, entry.from);
+		if (!existsSync(source)) throw new ConfigError(`copy source does not exist: ${entry.from}`);
+		const stat = lstatSync(source);
+		if (!stat.isFile() && !stat.isDirectory()) {
+			throw new ConfigError(`copy source is not a regular file or directory: ${entry.from}`);
+		}
+		const type = stat.isDirectory() ? "directory" : "file";
+		for (const to of entry.to) {
+			await assertDestinationUntracked(git, target, to);
+			plans.push({source, to, destination: resolve(target, to), type});
+		}
 	}
 	for (const plan of plans) {
 		mkdirSync(dirname(plan.destination), {recursive: true});
 		if (existsSync(plan.destination)) rmSync(plan.destination, {recursive: true, force: true});
-		writeFileSync(plan.destination, readFileSync(plan.source));
+		cpSync(plan.source, plan.destination, {recursive: plan.type === "directory"});
 	}
-	await writeCopyExcludeBlock(git, root, paths);
-	return plans.map((plan) => ({from: plan.source, to: plan.path, type: "file"}));
+	await writeCopyExcludeBlock(
+		git,
+		root,
+		plans.map((plan) => plan.to),
+	);
+	return plans.map((plan) => ({from: plan.source, to: plan.to, type: plan.type}));
 }
 
 async function assertDestinationUntracked(git: GitRunner, target: string, path: string): Promise<void> {
-	const tracked = await git.runRaw(["-C", target, "ls-files", "--error-unmatch", "--", path]);
-	if (tracked.exitCode === 0) throw new UnsafeOperationError(`copy destination is tracked by git: ${path}`);
+	const tracked = await git.runRaw(["-C", target, "ls-files", "--", path]);
+	const trackedPaths = tracked.stdout.trim().split("\n").filter(Boolean);
+	if (trackedPaths.length > 0) throw new UnsafeOperationError(`copy destination is tracked by git: ${path}`);
+	const parts = path.split("/");
+	for (let length = 1; length < parts.length; length++) {
+		const ancestor = parts.slice(0, length).join("/");
+		const trackedAncestor = await git.runRaw(["-C", target, "ls-files", "--error-unmatch", "--", ancestor]);
+		if (trackedAncestor.exitCode === 0) {
+			throw new UnsafeOperationError(`copy destination has tracked git ancestor: ${ancestor}`);
+		}
+	}
 }
 
 async function writeCopyExcludeBlock(git: GitRunner, root: string, paths: string[]): Promise<void> {

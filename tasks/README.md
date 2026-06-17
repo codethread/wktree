@@ -51,3 +51,11 @@ Append notes here. Do not rewrite earlier notes.
 - String copy entries now parse into file copy operations; object-form entries remain an explicit `ConfigError` for Task 3.
 - Root-relative file copying updates the canonical shared exclude fence on every `wktree copy`, including fence removal when no copy destinations remain.
 - Destination tracked-file checks currently use exact `git ls-files --error-unmatch -- <path>`, which matches this slice's file-only destination contract; Task 3 should revisit descendant overlap for directories.
+
+### Task 3 implementation notes — 2026-06-17
+
+- Copy entries now normalize to `{ from, to[] }` internally so string and object forms share one execution path.
+- Object `from` values intentionally expand only leading `~`; env-var/glob-looking names are literal filesystem paths.
+- Directory destinations are treated as exact managed paths and are deleted/recreated on rerun after a git tracked-descendant preflight.
+- Exclude paths are de-duplicated and sorted for the JSON payload and shared exclude fence.
+- Deep review follow-up tightened destination handling: leading-`~` destinations are rejected, tracked ancestor paths fail as unsafe blocked outcomes, and file copies now use filesystem copy semantics to preserve modes.
