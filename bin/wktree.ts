@@ -92,6 +92,7 @@ export interface AddPlan {
 	title: string;
 	postCreateScriptPath: string | null;
 	createdNewBranch: boolean;
+	rollbackBranchHead: string | null;
 }
 
 export interface RemovePlan {
@@ -113,6 +114,7 @@ export interface ReadyAddPayload {
 	session: SessionInfo;
 	post_create_script_path: string | null;
 	created_new_branch: boolean;
+	rollback_branch_head: string | null;
 }
 
 export interface ReadyRemovePayload {
@@ -399,6 +401,7 @@ async function main() {
 		.option("--self <path>", "Remove the worktree at this path")
 		.option("--json", "Machine-readable output")
 		.option("--force", "Force removal")
+		.option("--keep-branch", "Remove/recycle worktree without deleting branch")
 		.action(async (opts) => {
 			await runAction("remove", optsToArgs(opts), deps);
 		});
@@ -468,8 +471,9 @@ async function runAction(subcmd: string, args: string[], deps: Deps): Promise<vo
 function optsToArgs(opts: Record<string, unknown>): string[] {
 	const args: string[] = [];
 	for (const [key, value] of Object.entries(opts)) {
-		if (value === true) args.push(`--${key}`);
-		else if (value !== false && value !== undefined && value !== null) args.push(`--${key}`, String(value));
+		const flag = key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
+		if (value === true) args.push(`--${flag}`);
+		else if (value !== false && value !== undefined && value !== null) args.push(`--${flag}`, String(value));
 	}
 	return args;
 }
@@ -604,6 +608,12 @@ async function addCommand(args: string[], deps: Deps) {
 			branchState === "none" && !base
 				? await detectOriginDefaultBranch(machineDeps.git, canonicalRoot)
 				: null;
+		const originalBranchHead = await captureExistingBranchHead({
+			git: machineDeps.git,
+			root: canonicalRoot,
+			branch,
+			branchState,
+		});
 		await addNonPoolWorktree({
 			git: machineDeps.git,
 			root: canonicalRoot,
@@ -613,19 +623,31 @@ async function addCommand(args: string[], deps: Deps) {
 			base: base ?? defaultBase,
 			progress: machineDeps.progress,
 		});
-		await mergeOriginIfPresent({
-			git: machineDeps.git,
-			worktreePath,
-			branch,
-			progress: machineDeps.progress,
-		});
-		if (project) {
-			await runCopySetup({
+		try {
+			await mergeOriginIfPresent({
+				git: machineDeps.git,
+				worktreePath,
+				branch,
+				progress: machineDeps.progress,
+			});
+			if (project) {
+				await runCopySetup({
+					git: machineDeps.git,
+					root: canonicalRoot,
+					target: worktreePath,
+					entries: project.copy,
+				});
+			}
+		} catch (error) {
+			await rollbackNonPoolAdd({
 				git: machineDeps.git,
 				root: canonicalRoot,
-				target: worktreePath,
-				entries: project.copy,
+				worktreePath,
+				branch,
+				branchState,
+				originalBranchHead,
 			});
+			throw error;
 		}
 
 		const postCreateScriptPath = project
@@ -637,7 +659,8 @@ async function addCommand(args: string[], deps: Deps) {
 			root: canonicalRoot,
 			title: branch,
 			postCreateScriptPath,
-			createdNewBranch: branchState === "none",
+			createdNewBranch: branchState === "none" || branchState === "remote",
+			rollbackBranchHead: originalBranchHead,
 		};
 		return finalizeStructuredResult(toAddPayload(plan), output);
 	} catch (error) {
@@ -682,7 +705,7 @@ async function addPooledWorktree(options: {
 		if (!selected.initialized) throw new BlockedError(`pool slot is not initialized: ${selected.path}`);
 		let targetSlot = selected;
 		if (!targetSlot.placeholder) {
-			await recycleSlot({git: deps.git, project, root, slotPath: targetSlot.path, force});
+			await recycleSlot({git: deps.git, project, root, slotPath: targetSlot.path, force, keepBranch: false});
 			state = await buildPoolState(project, await listWorktrees(deps.git, root), deps.git);
 			targetSlot = state.slots.find((candidate) => candidate.index === selected.index) ?? targetSlot;
 		}
@@ -715,7 +738,7 @@ async function addPooledWorktree(options: {
 		const confirmed = await deps.picker.confirm(await buildRecycleConfirmPrompt(deps.git, selected));
 		if (!confirmed) throw new PickerCancelled();
 	}
-	await recycleSlot({git: deps.git, project, root, slotPath: selected.path, force: true});
+	await recycleSlot({git: deps.git, project, root, slotPath: selected.path, force: true, keepBranch: false});
 	state = await buildPoolState(project, await listWorktrees(deps.git, root), deps.git);
 	const recycled = state.slots.find((candidate) => candidate.index === selected.index);
 	if (!recycled) throw new WktreeError(`pool slot disappeared after recycle: ${selected.path}`);
@@ -735,6 +758,7 @@ async function allocatePooledSlot(options: {
 }): Promise<ReadyAddPayload> {
 	const {deps, project, root, slot, branch, base} = options;
 	const branchState = await detectBranchState(deps.git, root, branch);
+	const originalBranchHead = await captureExistingBranchHead({git: deps.git, root, branch, branchState});
 	const defaultBase =
 		branchState === "none" && !base ? await detectOriginDefaultBranch(deps.git, root) : null;
 	await checkoutBranchInSlot({
@@ -745,8 +769,13 @@ async function allocatePooledSlot(options: {
 		base: base ?? defaultBase,
 		progress: deps.progress,
 	});
-	await mergeOriginIfPresent({git: deps.git, worktreePath: slot.path, branch, progress: deps.progress});
-	await runCopySetup({git: deps.git, root, target: slot.path, entries: project.copy});
+	try {
+		await mergeOriginIfPresent({git: deps.git, worktreePath: slot.path, branch, progress: deps.progress});
+		await runCopySetup({git: deps.git, root, target: slot.path, entries: project.copy});
+	} catch (error) {
+		await rollbackPooledAllocation({git: deps.git, root, slot, branch, branchState, originalBranchHead});
+		throw error;
+	}
 	const postCreateScriptPath = writePostCreateScript({
 		project,
 		root,
@@ -760,7 +789,8 @@ async function allocatePooledSlot(options: {
 		root,
 		title: branch,
 		postCreateScriptPath,
-		createdNewBranch: branchState === "none",
+		createdNewBranch: branchState === "none" || branchState === "remote",
+		rollbackBranchHead: originalBranchHead,
 	};
 	return toAddPayload(plan);
 }
@@ -929,6 +959,7 @@ async function removeCommand(args: string[], deps: Deps) {
 	const branch = typeof opts.branch === "string" ? opts.branch : null;
 	const self = typeof opts.self === "string" ? opts.self : null;
 	const force = opts.force === true;
+	const keepBranch = opts["keep-branch"] === true;
 	if ((branch && self) || (!branch && !self)) {
 		throw new UsageError("provide exactly one of --branch or --self");
 	}
@@ -949,7 +980,14 @@ async function removeCommand(args: string[], deps: Deps) {
 			throw new CanonicalRootError("refusing to remove canonical root");
 		}
 		if (project?.poolSize && target.pool) {
-			await recycleSlot({git: machineDeps.git, project, root: canonical.path, slotPath: target.path, force});
+			await recycleSlot({
+				git: machineDeps.git,
+				project,
+				root: canonical.path,
+				slotPath: target.path,
+				force,
+				keepBranch,
+			});
 			return finalizeStructuredResult(toRemovePayload({worktreePath: target.path, removed: false}), output);
 		}
 
@@ -963,7 +1001,7 @@ async function removeCommand(args: string[], deps: Deps) {
 			...(force ? ["--force"] : []),
 			target.path,
 		]);
-		if (target.branch) {
+		if (target.branch && !keepBranch) {
 			await machineDeps.git.run(["-C", canonical.path, "branch", force ? "-D" : "-d", target.branch]);
 		}
 
@@ -989,7 +1027,7 @@ async function recycleCommand(args: string[], deps: Deps) {
 	const root = await resolveCanonicalRoot(deps.git, cwd);
 	const project = findProjectForRoot(readConfig(), root);
 	if (!project?.poolSize) throw new UsageError("recycle requires a pooled project");
-	await recycleSlot({git: deps.git, project, root, slotPath, force});
+	await recycleSlot({git: deps.git, project, root, slotPath, force, keepBranch: false});
 	return {exitCode: 0};
 }
 
@@ -1031,14 +1069,73 @@ async function copyCommand(args: string[], deps: Deps) {
 	}
 }
 
+async function captureExistingBranchHead(options: {
+	git: GitRunner;
+	root: string;
+	branch: string;
+	branchState: BranchState;
+}): Promise<string | null> {
+	const {git, root, branch, branchState} = options;
+	if (branchState !== "local" && branchState !== "local-remote") return null;
+	const result = await git.run(["-C", root, "rev-parse", `refs/heads/${branch}`]);
+	return result.stdout.trim();
+}
+
+async function restoreBranchRef(options: {
+	git: GitRunner;
+	root: string;
+	branch: string;
+	branchState: BranchState;
+	originalBranchHead: string | null;
+}): Promise<void> {
+	const {git, root, branch, branchState, originalBranchHead} = options;
+	if (branchState === "none" || branchState === "remote") {
+		await git.runRaw(["-C", root, "branch", "-D", branch]);
+		return;
+	}
+	if (originalBranchHead) await git.runRaw(["-C", root, "branch", "-f", branch, originalBranchHead]);
+}
+
+async function rollbackNonPoolAdd(options: {
+	git: GitRunner;
+	root: string;
+	worktreePath: string;
+	branch: string;
+	branchState: BranchState;
+	originalBranchHead: string | null;
+}): Promise<void> {
+	const {git, root, worktreePath, branch, branchState, originalBranchHead} = options;
+	await git.runRaw(["-C", root, "worktree", "remove", "--force", worktreePath]);
+	await restoreBranchRef({git, root, branch, branchState, originalBranchHead});
+}
+
+async function rollbackPooledAllocation(options: {
+	git: GitRunner;
+	root: string;
+	slot: Slot;
+	branch: string;
+	branchState: BranchState;
+	originalBranchHead: string | null;
+}): Promise<void> {
+	const {git, root, slot, branch, branchState, originalBranchHead} = options;
+	const trunk = await detectOriginDefaultBranch(git, root);
+	const placeholderBranch = `wk-pool/feat${slot.index}`;
+	await ensurePlaceholderBranch({git, root, branch: placeholderBranch, trunk});
+	await git.runRaw(["-C", slot.path, "checkout", "-f", "-B", placeholderBranch, `origin/${trunk}`]);
+	await git.runRaw(["-C", slot.path, "reset", "--hard", placeholderBranch]);
+	await git.runRaw(["-C", slot.path, "clean", "-fd"]);
+	await restoreBranchRef({git, root, branch, branchState, originalBranchHead});
+}
+
 async function recycleSlot(options: {
 	git: GitRunner;
 	project: ProjectConfig;
 	root: string;
 	slotPath: string;
 	force: boolean;
+	keepBranch: boolean;
 }): Promise<void> {
-	const {git, project, root, slotPath, force} = options;
+	const {git, project, root, slotPath, force, keepBranch} = options;
 	const normalizedSlotPath = normalizeExistingPath(slotPath);
 	const worktrees = await listWorktrees(git, root);
 	const state = await buildPoolState(project, worktrees, git);
@@ -1052,7 +1149,7 @@ async function recycleSlot(options: {
 		await git.run(["-C", slot.path, "reset", "--hard", placeholderBranch]);
 		await git.run(["-C", slot.path, "clean", "-fd"]);
 		if (oldBranch && oldBranch !== placeholderBranch) {
-			await git.run(["-C", root, "branch", "-D", oldBranch]);
+			if (!keepBranch) await git.run(["-C", root, "branch", "-D", oldBranch]);
 			await killTmuxSessionForPath(slot.path);
 		}
 		return;
@@ -1063,7 +1160,7 @@ async function recycleSlot(options: {
 	if (oldBranch && oldBranch !== placeholderBranch) await assertBranchHasMergedUpstream(git, root, oldBranch);
 	await git.run(["-C", slot.path, "checkout", "-B", placeholderBranch, `origin/${state.trunk}`]);
 	if (oldBranch && oldBranch !== placeholderBranch) {
-		await git.run(["-C", root, "branch", "-d", oldBranch]);
+		if (!keepBranch) await git.run(["-C", root, "branch", "-d", oldBranch]);
 		await killTmuxSessionForPath(slot.path);
 	}
 }
@@ -1169,7 +1266,7 @@ function parseOptions(args: string[]) {
 	const opts: Record<string, string | boolean> = {};
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
-		if (arg === "--json" || arg === "--force") {
+		if (arg === "--json" || arg === "--force" || arg === "--keep-branch") {
 			opts[arg.slice(2)] = true;
 			continue;
 		}
@@ -1378,6 +1475,7 @@ function toAddPayload(plan: AddPlan): ReadyAddPayload {
 		session: toSessionInfo(plan.worktreePath),
 		post_create_script_path: plan.postCreateScriptPath,
 		created_new_branch: plan.createdNewBranch,
+		rollback_branch_head: plan.rollbackBranchHead,
 	};
 }
 

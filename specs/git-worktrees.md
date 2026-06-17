@@ -217,7 +217,8 @@ Successful add-like payload:
   "title": "feature/foo",
   "session": { "name": "repo__feature--foo", "path": "/repo__feature--foo" },
   "post_create_script_path": null,
-  "created_new_branch": true
+  "created_new_branch": true,
+  "rollback_branch_head": null
 }
 ```
 

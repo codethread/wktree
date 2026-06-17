@@ -66,6 +66,7 @@ Import `nu/wktree/mod.nu` to get the human-facing commands:
 - `wk path <branch>`
 - `wk add <branch> [base] [--self] [--latest] [--force]`
 - `wk remove <branch> | wk remove --self [--force]`
+- `wk copy [--json]`
 - `wk list [--json]`
 - `wk switch`
 
@@ -89,6 +90,6 @@ copy = [
 ]
 ```
 
-String `copy` entries copy root-relative files to the same relative path in the created worktree. Object entries use `from` and `to`; `from` may be root-relative, absolute, or start with `~`, and `to` may be a destination string or array of destination strings. Destination paths are always relative to the created worktree. Copy setup runs before the configured `command`, and can be rerun for an existing non-root worktree with `wktree copy --cwd <path> [--json]`.
+String `copy` entries copy root-relative files to the same relative path in the created worktree. Object entries use `from` and `to`; `from` may be root-relative, absolute, or start with `~`, and `to` may be a destination string or array of destination strings. Destination paths are always relative to the created worktree. Copy setup runs before the configured `command`, and can be rerun for an existing non-root worktree with `wktree copy --cwd <path> [--json]` or `wk copy [--json]`.
 
 For pooled projects, `wktree ensure --cwd <path>` materializes slots named like `<root>__featN` with placeholder branches `wk-pool/featN`.

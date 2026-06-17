@@ -22,14 +22,41 @@ def wktree-message [payload: record fallback: string] {
 	}
 }
 
-def run-post-create [runner_path: any] {
+def run-post-create [runner_path: any created_path: string] {
 	let runner = ($runner_path | default "")
 	if $runner == "" {
 		return
 	}
 	print --stderr $"wk: running post-create ($runner)"
-	^bash $runner
+	let result = (^bash $runner | complete)
+	if $result.stdout != "" {
+		print --no-newline $result.stdout
+	}
+	if $result.stderr != "" {
+		print --stderr --no-newline $result.stderr
+	}
+	if $result.exit_code != 0 {
+		print --stderr $"wk: post-create failed; rolling back ($created_path)"
+		error make { msg: $"post-create failed with exit code ($result.exit_code)" }
+	}
 	print --stderr "wk: post-create complete"
+}
+
+def rollback-add-payload [payload: record] {
+	let keep_branch = not $payload.created_new_branch
+	let args = [remove --cwd $payload.worktree_path --self $payload.worktree_path --force --json]
+	let args = if $keep_branch { $args | append "--keep-branch" } else { $args }
+	let cleanup = (^wktree ...$args | complete)
+	if $cleanup.stderr != "" {
+		print --stderr --no-newline $cleanup.stderr
+	}
+	if $cleanup.exit_code != 0 {
+		print --stderr "wk: rollback failed"
+		return
+	}
+	if $keep_branch and $payload.rollback_branch_head != null {
+		^git -C $payload.root branch -f $payload.branch $payload.rollback_branch_head
+	}
 }
 
 def pick-pool-slot [branch: string candidates: list<record> force: bool] {
@@ -156,7 +183,12 @@ export def --env "wk add" [
 	match $outcome.payload.kind {
 		"ready" => {
 			print --stderr $"wk: worktree ready at ($outcome.payload.worktree_path)"
-			run-post-create $outcome.payload.post_create_script_path
+			try {
+				run-post-create $outcome.payload.post_create_script_path $outcome.payload.worktree_path
+			} catch {|err|
+				rollback-add-payload $outcome.payload
+				error make $err.raw
+			}
 			print --stderr "wk: opening tmux session"
 			wk-open-dir $outcome.payload.worktree_path $outcome.payload.title
 		}
@@ -182,7 +214,12 @@ export def --env "wk add" [
 				error make { msg: (wktree-message $retry.payload $"wktree add returned ($retry.payload.kind)") }
 			}
 			print --stderr $"wk: worktree ready at ($retry.payload.worktree_path)"
-			run-post-create $retry.payload.post_create_script_path
+			try {
+				run-post-create $retry.payload.post_create_script_path $retry.payload.worktree_path
+			} catch {|err|
+				rollback-add-payload $retry.payload
+				error make $err.raw
+			}
 			print --stderr "wk: opening tmux session"
 			wk-open-dir $retry.payload.worktree_path $retry.payload.title
 		}
@@ -243,6 +280,31 @@ export def --env "wk remove" [
 	wk-close-dir $outcome.payload.worktree_path
 	if ($env.PWD == $outcome.payload.worktree_path or ($env.PWD | str starts-with $"($outcome.payload.worktree_path)/")) {
 		cd ~
+	}
+}
+
+# Re-run configured copy setup for the current non-canonical worktree.
+export def "wk copy" [
+	--json # return structured JSON/table data instead of status text
+] {
+	let outcome = (wktree-outcome {||
+		let args = [copy --cwd $env.PWD --json]
+		^wktree ...$args
+	})
+
+	if $outcome.payload == null {
+		if $outcome.exit_code != 0 {
+			error make { msg: "wktree copy failed" }
+		}
+		return
+	}
+	if $outcome.payload.kind != "ready" {
+		error make { msg: (wktree-message $outcome.payload $"wktree copy returned ($outcome.payload.kind)") }
+	}
+	if $json {
+		$outcome.payload
+	} else {
+		print --stderr $"wk: copied ($outcome.payload.copied | length) items into ($outcome.payload.worktree_path)"
 	}
 }
 

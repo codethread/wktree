@@ -45,16 +45,22 @@ describe("wk nushell smoke", () => {
 
 	test("non-pool wk add runs project command and wk remove deletes cleanly", async () => {
 		const {root} = await initRepoWithOrigin(join(tmp, "nonpool"));
+		writeFileSync(join(root, ".env"), "first\n");
 		writeConfig({
 			configHome: env.XDG_CONFIG_HOME,
 			root,
 			command: `printf 'sentinel\\n' > "$WK_CREATED/nonpool-sentinel"`,
+			copyToml: 'copy = [".env"]\n',
 		});
 
 		await runNu(`cd ${nuString(root)}; wk add feature/nonpool`, env);
 
 		const worktreePath = await worktreePathForBranch(root, "feature/nonpool");
 		expect(readFileSync(join(worktreePath, "nonpool-sentinel"), "utf8")).toBe("sentinel\n");
+		expect(readFileSync(join(worktreePath, ".env"), "utf8")).toBe("first\n");
+		writeFileSync(join(root, ".env"), "second\n");
+		await runNu(`cd ${nuString(worktreePath)}; wk copy`, env);
+		expect(readFileSync(join(worktreePath, ".env"), "utf8")).toBe("second\n");
 		writeFileSync(join(worktreePath, "self-base.txt"), "self base\n");
 		await run(["git", "-C", worktreePath, "add", "self-base.txt"]);
 		await run(["git", "-C", worktreePath, "commit", "-m", "self base"]);
@@ -67,6 +73,41 @@ describe("wk nushell smoke", () => {
 		await runNu(`cd ${nuString(root)}; wk remove feature/nonpool --force`, env);
 
 		expect(existsSync(worktreePath)).toBe(false);
+	});
+
+	test("wk add rolls back when post-create fails", async () => {
+		const {root} = await initRepoWithOrigin(join(tmp, "post-create-fail"));
+		writeConfig({
+			configHome: env.XDG_CONFIG_HOME,
+			root,
+			command: "exit 7",
+		});
+
+		const result = await runRaw(
+			["nu", "-c", `use ${nuString(nuModule)} *; cd ${nuString(root)}; wk add feature/fails`],
+			env,
+		);
+
+		expect(result.exitCode).not.toBe(0);
+		expect(existsSync(`${root}__feature--fails`)).toBe(false);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/fails"])).exitCode,
+		).not.toBe(0);
+
+		await run(["git", "-C", root, "branch", "feature/existing"]);
+		const existingHead = (
+			await run(["git", "-C", root, "rev-parse", "refs/heads/feature/existing"])
+		).stdout.trim();
+		const existingResult = await runRaw(
+			["nu", "-c", `use ${nuString(nuModule)} *; cd ${nuString(root)}; wk add feature/existing`],
+			env,
+		);
+
+		expect(existingResult.exitCode).not.toBe(0);
+		expect(existsSync(`${root}__feature--existing`)).toBe(false);
+		expect((await run(["git", "-C", root, "rev-parse", "refs/heads/feature/existing"])).stdout.trim()).toBe(
+			existingHead,
+		);
 	});
 
 	test("pooled wk add initializes slots, recycles, and reallocates non-interactively", async () => {
@@ -109,11 +150,17 @@ describe("wk nushell smoke", () => {
 	}, 30_000);
 });
 
-function writeConfig(spec: {configHome: string; root: string; command: string; poolSize?: number}) {
+function writeConfig(spec: {
+	configHome: string;
+	root: string;
+	command: string;
+	poolSize?: number;
+	copyToml?: string;
+}) {
 	mkdirSync(join(spec.configHome, "ct-worktrees"), {recursive: true});
 	writeFileSync(
 		join(spec.configHome, "ct-worktrees/trees.toml"),
-		`[[project]]\nroot = ${JSON.stringify(spec.root)}\ncommand = '''\n${spec.command}\n'''\n${spec.poolSize ? `pool_size = ${spec.poolSize}\n` : ""}`,
+		`[[project]]\nroot = ${JSON.stringify(spec.root)}\ncommand = '''\n${spec.command}\n'''\n${spec.poolSize ? `pool_size = ${spec.poolSize}\n` : ""}${spec.copyToml ?? ""}`,
 	);
 }
 

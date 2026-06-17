@@ -436,6 +436,40 @@ integrationDescribe("wktree non-pool add", () => {
 		expect(readFileSync(join(worktreePath, "hook-read-env"), "utf8")).toBe("SECRET=setup\n");
 	});
 
+	test("copy setup failure during add rolls back the new worktree and branch", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo should-not-run", undefined, 'copy = [".env.missing"]\n');
+
+		await expect(
+			dispatch("add", ["--cwd", root, "--branch", "feature/copy-fail", "--json"], deps),
+		).rejects.toThrow("copy source does not exist");
+
+		expect(existsSync(`${root}__feature--copy-fail`)).toBe(false);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/copy-fail"])).exitCode,
+		).not.toBe(0);
+	});
+
+	test("copy setup failure during add restores an existing branch tip", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		await createRemoteBranch(remote, "feature/restore-tip");
+		await run(["git", "-C", root, "fetch", "origin"]);
+		await run(["git", "-C", root, "branch", "feature/restore-tip", "main"]);
+		const originalHead = (
+			await run(["git", "-C", root, "rev-parse", "refs/heads/feature/restore-tip"])
+		).stdout.trim();
+		writeConfig(tmp, root, "echo should-not-run", undefined, 'copy = [".env.missing"]\n');
+
+		await expect(
+			dispatch("add", ["--cwd", root, "--branch", "feature/restore-tip", "--json"], deps),
+		).rejects.toThrow("copy source does not exist");
+
+		expect(existsSync(`${root}__feature--restore-tip`)).toBe(false);
+		expect(
+			(await run(["git", "-C", root, "rev-parse", "refs/heads/feature/restore-tip"])).stdout.trim(),
+		).toBe(originalHead);
+	});
+
 	test.each([
 		{
 			name: "existing local",
@@ -833,6 +867,8 @@ integrationDescribe("wktree copy", () => {
 		await run(["git", "-C", root, "add", "tracked-file"]);
 		await run(["git", "-C", root, "commit", "-m", "tracked ancestor"]);
 		await run(["git", "-C", root, "push", "origin", "main"]);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/tracked-ancestor", "--json"], deps);
 		writeConfig(
 			tmp,
 			root,
@@ -840,7 +876,6 @@ integrationDescribe("wktree copy", () => {
 			undefined,
 			'copy = [{ from = ".env", to = "tracked-file/nested" }]\n',
 		);
-		await dispatch("add", ["--cwd", root, "--branch", "feature/tracked-ancestor", "--json"], deps);
 
 		const result = await dispatch("copy", ["--cwd", `${root}__feature--tracked-ancestor`, "--json"], deps);
 
@@ -1323,6 +1358,49 @@ integrationDescribe("wktree pooled add", () => {
 		);
 		await run(["bash", plan.post_create_script_path]);
 		expect(readFileSync(join(`${root}__feat1`, "allocated-read"), "utf8")).toBe("pooled\n");
+	});
+
+	test("copy setup failure during allocation restores the slot placeholder", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", 1);
+		await dispatch("ensure", ["--cwd", root], testDeps());
+		writeConfig(tmp, root, "echo should-not-run", 1, 'copy = [".env.missing"]\n');
+
+		await expect(
+			dispatch("add", ["--cwd", root, "--branch", "feature/allocated-copy-fail", "--json"], testDeps()),
+		).rejects.toThrow("copy source does not exist");
+
+		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
+			"wk-pool/feat1",
+		);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/allocated-copy-fail"]))
+				.exitCode,
+		).not.toBe(0);
+	});
+
+	test("copy setup failure during allocation restores an existing branch tip", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		await createRemoteBranch(remote, "feature/pool-restore-tip");
+		await run(["git", "-C", root, "fetch", "origin"]);
+		await run(["git", "-C", root, "branch", "feature/pool-restore-tip", "main"]);
+		const originalHead = (
+			await run(["git", "-C", root, "rev-parse", "refs/heads/feature/pool-restore-tip"])
+		).stdout.trim();
+		writeConfig(tmp, root, "echo ready", 1);
+		await dispatch("ensure", ["--cwd", root], testDeps());
+		writeConfig(tmp, root, "echo should-not-run", 1, 'copy = [".env.missing"]\n');
+
+		await expect(
+			dispatch("add", ["--cwd", root, "--branch", "feature/pool-restore-tip", "--json"], testDeps()),
+		).rejects.toThrow("copy source does not exist");
+
+		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
+			"wk-pool/feat1",
+		);
+		expect(
+			(await run(["git", "-C", root, "rev-parse", "refs/heads/feature/pool-restore-tip"])).stdout.trim(),
+		).toBe(originalHead);
 	});
 
 	test.each([
