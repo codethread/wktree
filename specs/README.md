@@ -1,7 +1,10 @@
 # Specifications
 
-Persistent specifications for `wktree`.
+Persistent domain specifications for `wktree`. Organized by system area, not feature
+chronology.
 
-| Spec | Code | Purpose |
+## Worktree lifecycle
+
+| Spec | Purpose | Code |
 |---|---|---|
-| [git-worktrees.md](./git-worktrees.md) | `bin/`, `shared/`, `nu/wktree/`, `tests/` | Engine and wrapper contract for deterministic git worktree lifecycle management |
+| [git-worktrees.md](./git-worktrees.md) | Deterministic git worktree lifecycle: commands, identity, safety, pools, config, copy setup | `bin/`, `shared/`, `nu/wktree/` |

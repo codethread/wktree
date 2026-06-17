@@ -1,0 +1,26 @@
+tasks:
+  - id: 1
+    description: Add copy config and command skeleton
+    task_file: tasks/001-add-copy-config-and-command-skeleton.md
+    status: pending
+    blocked_by: []
+  - id: 2
+    description: Copy root-relative file entries
+    task_file: tasks/002-copy-root-relative-file-entries.md
+    status: pending
+    blocked_by: [1]
+  - id: 3
+    description: Copy object and directory entries
+    task_file: tasks/003-copy-object-and-directory-entries.md
+    status: pending
+    blocked_by: [2]
+  - id: 4
+    description: Integrate copy with worktree setup
+    task_file: tasks/004-integrate-copy-with-worktree-setup.md
+    status: pending
+    blocked_by: [3]
+  - id: 5
+    description: Document copy setup usage
+    task_file: tasks/005-document-copy-setup-usage.md
+    status: pending
+    blocked_by: [4]
