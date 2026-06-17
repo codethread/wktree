@@ -73,7 +73,7 @@ The wrapper runs any returned post-create script and then opens or switches to t
 
 ## Project configuration
 
-Project config is read from `ct-worktrees/trees.toml` under XDG config home. Projects can define `name`, `root`, `command`, and optional `pool_size`.
+Project config is read from `ct-worktrees/trees.toml` under XDG config home. Projects can define `name`, `root`, `command`, optional `pool_size`, and optional `copy` entries.
 
 Example:
 
@@ -83,6 +83,12 @@ name = "example"
 root = "~/dev/example"
 command = "bun install"
 pool_size = 3
+copy = [
+  ".env",
+  { from = "~/my/repo/skill-dir", to = [".claude/skills/skill-dir", ".pi/agents/skill-dir"] },
+]
 ```
+
+String `copy` entries copy root-relative files to the same relative path in the created worktree. Object entries use `from` and `to`; `from` may be root-relative, absolute, or start with `~`, and `to` may be a destination string or array of destination strings. Destination paths are always relative to the created worktree. Copy setup runs before the configured `command`, and can be rerun for an existing non-root worktree with `wktree copy --cwd <path> [--json]`.
 
 For pooled projects, `wktree ensure --cwd <path>` materializes slots named like `<root>__featN` with placeholder branches `wk-pool/featN`.

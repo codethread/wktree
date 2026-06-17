@@ -22,5 +22,5 @@ tasks:
   - id: 5
     description: Document copy setup usage
     task_file: tasks/005-document-copy-setup-usage.md
-    status: pending
+    status: complete
     blocked_by: [4]

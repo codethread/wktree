@@ -65,3 +65,8 @@ Append notes here. Do not rewrite earlier notes.
 - Worktree lifecycle paths now run the same copy setup engine before returning post-create scripts for non-pooled add and pooled allocation.
 - Pooled ensure runs copy setup inside the existing initialization rollback boundary before invoking the configured command, so list/remove-triggered initialization inherits the same behavior.
 - Existing explicit `wktree copy` tests that intentionally exercise invalid copy config now create the worktree before installing invalid copy config, because normal add setup now fails loudly on those same invalid configurations.
+
+### Task 5 implementation notes — 2026-06-17
+
+- README now documents copy config forms, destination relativity, leading-`~` source expansion, setup ordering, and explicit `wktree copy` usage.
+- The durable spec status was moved back to `Implemented` after final validation confirmed the documented copy behavior is covered by the current implementation and tests.
