@@ -421,6 +421,21 @@ integrationDescribe("wktree non-pool add", () => {
 		expect(readFileSync(join(worktreePath, "hook-sentinel"), "utf8")).toBe("hook\n");
 	});
 
+	test("copies configured files before returning the post-create script", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeFileSync(join(root, ".env"), "SECRET=setup\n");
+		writeConfig(tmp, root, 'cat .env > "$WK_CREATED/hook-read-env"', undefined, 'copy = [".env"]\n');
+
+		const result = await dispatch("add", ["--cwd", root, "--branch", "feature/copy-setup", "--json"], deps);
+		const worktreePath = `${root}__feature--copy-setup`;
+		const plan = JSON.parse(result.stdout ?? "{}");
+
+		expect(readFileSync(join(worktreePath, ".env"), "utf8")).toBe("SECRET=setup\n");
+		expect((await run(["git", "-C", worktreePath, "status", "--porcelain"])).stdout).toBe("");
+		await run(["bash", plan.post_create_script_path]);
+		expect(readFileSync(join(worktreePath, "hook-read-env"), "utf8")).toBe("SECRET=setup\n");
+	});
+
 	test.each([
 		{
 			name: "existing local",
@@ -646,8 +661,9 @@ integrationDescribe("wktree copy", () => {
 		await run(["git", "-C", root, "commit", "-m", "add tracked copy"]);
 		await run(["git", "-C", root, "push", "origin", "main"]);
 		writeFileSync(join(root, "tracked-copy.txt"), "new source\n");
-		writeConfig(tmp, root, "echo ready", undefined, 'copy = ["tracked-copy.txt"]\n');
+		writeConfig(tmp, root, "echo ready");
 		await dispatch("add", ["--cwd", root, "--branch", "feature/tracked-copy", "--json"], deps);
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = ["tracked-copy.txt"]\n');
 		const worktreePath = `${root}__feature--tracked-copy`;
 
 		const result = await dispatch("copy", ["--cwd", worktreePath, "--json"], deps);
@@ -675,8 +691,9 @@ integrationDescribe("wktree copy", () => {
 
 	test("missing source fails as config error without structured stdout", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
-		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env.missing"]\n');
+		writeConfig(tmp, root, "echo ready");
 		await dispatch("add", ["--cwd", root, "--branch", "feature/missing-copy", "--json"], deps);
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env.missing"]\n');
 
 		await expect(
 			dispatch("copy", ["--cwd", `${root}__feature--missing-copy`, "--json"], deps),
@@ -690,8 +707,9 @@ integrationDescribe("wktree copy", () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeFileSync(join(root, ".env.real"), "real\n");
 		symlinkSync(".env.real", join(root, ".env.link"));
-		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env.link"]\n');
+		writeConfig(tmp, root, "echo ready");
 		await dispatch("add", ["--cwd", root, "--branch", "feature/symlink-source", "--json"], deps);
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env.link"]\n');
 
 		await expect(
 			dispatch("copy", ["--cwd", `${root}__feature--symlink-source`, "--json"], deps),
@@ -704,8 +722,9 @@ integrationDescribe("wktree copy", () => {
 	test("copy preflights all entries before replacing destinations", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeFileSync(join(root, ".env"), "source\n");
-		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env", ".env.missing"]\n');
+		writeConfig(tmp, root, "echo ready");
 		await dispatch("add", ["--cwd", root, "--branch", "feature/preflight", "--json"], deps);
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = [".env", ".env.missing"]\n');
 		const worktreePath = `${root}__feature--preflight`;
 		writeFileSync(join(worktreePath, ".env"), "do not replace\n");
 
@@ -791,8 +810,9 @@ integrationDescribe("wktree copy", () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		mkdirSync(join(root, "src-dir"));
 		writeFileSync(join(root, "src-dir", "foo.txt"), "source\n");
-		writeConfig(tmp, root, "echo ready", undefined, 'copy = [{ from = "src-dir", to = "tracked-dir" }]\n');
+		writeConfig(tmp, root, "echo ready");
 		await dispatch("add", ["--cwd", root, "--branch", "feature/tracked-desc", "--json"], deps);
+		writeConfig(tmp, root, "echo ready", undefined, 'copy = [{ from = "src-dir", to = "tracked-dir" }]\n');
 		const worktreePath = `${root}__feature--tracked-desc`;
 		mkdirSync(join(worktreePath, "tracked-dir"));
 		writeFileSync(join(worktreePath, "tracked-dir", "keep.txt"), "tracked\n");
@@ -1284,6 +1304,27 @@ integrationDescribe("wktree pooled add", () => {
 		);
 	});
 
+	test("copies into allocated slot after checkout and before post-create script", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeFileSync(join(root, ".env"), "pooled\n");
+		writeConfig(tmp, root, 'cat .env > "$WK_CREATED/allocated-read"', 1, 'copy = [".env"]\n');
+		await dispatch("ensure", ["--cwd", root], testDeps());
+
+		const result = await dispatch(
+			"add",
+			["--cwd", root, "--branch", "feature/allocated-copy", "--json"],
+			testDeps(),
+		);
+		const plan = JSON.parse(result.stdout ?? "{}");
+
+		expect(readFileSync(join(`${root}__feat1`, ".env"), "utf8")).toBe("pooled\n");
+		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
+			"feature/allocated-copy",
+		);
+		await run(["bash", plan.post_create_script_path]);
+		expect(readFileSync(join(`${root}__feat1`, "allocated-read"), "utf8")).toBe("pooled\n");
+	});
+
 	test.each([
 		{
 			name: "existing remote-only",
@@ -1673,6 +1714,20 @@ integrationDescribe("wktree ensure", () => {
 		expect(existsSync(join(`${root}__feat2`, "sentinel"))).toBe(true);
 	});
 
+	test("copies files before pooled ensure hooks run", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeFileSync(join(root, ".env"), "ensure-copy\n");
+		writeConfig(tmp, root, 'cat .env > "$WK_CREATED/hook-read-env"', 2, 'copy = [".env"]\n');
+
+		await dispatch("ensure", ["--cwd", root], testDeps());
+
+		expect(readFileSync(join(`${root}__feat1`, "hook-read-env"), "utf8")).toBe("ensure-copy\n");
+		expect(readFileSync(join(`${root}__feat2`, "hook-read-env"), "utf8")).toBe("ensure-copy\n");
+		expect((await run(["git", "-C", `${root}__feat1`, "status", "--porcelain", "--", ".env"])).stdout).toBe(
+			"",
+		);
+	});
+
 	test("hook failure rolls back only in-flight slot and rerun recovers", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeConfig(
@@ -1711,14 +1766,62 @@ integrationDescribe("wktree ensure", () => {
 		expect(existsSync(`${root}__feat2`)).toBe(true);
 	});
 
+	test("copy failure rolls back newly-created pooled slots", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "touch should-not-run", 1, 'copy = [".env.missing"]\n');
+
+		await expect(dispatch("ensure", ["--cwd", root], testDeps())).rejects.toMatchObject({
+			exitCode: EXIT_CODES.USAGE,
+		});
+
+		expect(existsSync(`${root}__feat1`)).toBe(false);
+	});
+
+	test("copy failure preserves existing half-initialized pooled slots", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "touch should-not-run", 2, 'copy = [".env.missing"]\n');
+		await createPoolSlot(root, 1, "wk-pool/feat1", true);
+		await createPoolSlot(root, 2, "wk-pool/feat2", false);
+
+		await expect(dispatch("ensure", ["--cwd", root], testDeps())).rejects.toMatchObject({
+			exitCode: EXIT_CODES.USAGE,
+		});
+
+		expect(existsSync(`${root}__feat2`)).toBe(true);
+		expect(existsSync(join(`${root}__feat2`, "should-not-run"))).toBe(false);
+		const marker = (
+			await run(["git", "-C", `${root}__feat2`, "rev-parse", "--git-path", "wk-pool-initialized"])
+		).stdout.trim();
+		expect(existsSync(resolve(`${root}__feat2`, marker))).toBe(false);
+	});
+
+	test("list json keeps pool initialization stdout out of structured output", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo setup-output", 1);
+		const diagnostics: string[] = [];
+
+		const result = await dispatch(
+			"list",
+			["--cwd", root, "--json"],
+			testDeps({progress: {...deps.progress, error: (msg: string) => diagnostics.push(msg)}}),
+		);
+
+		expect(() => JSON.parse(result.stdout ?? "")).not.toThrow();
+		expect(diagnostics).toContain("setup-output");
+	});
+
 	test("list and pooled remove trigger first-run ensure", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
-		writeConfig(tmp, root, "touch ensured", 1);
+		writeFileSync(join(root, ".env"), "ensured-copy\n");
+		writeConfig(tmp, root, "echo setup-output; touch ensured", 1, 'copy = [".env"]\n');
 
 		const listResult = await dispatch("list", ["--cwd", root], testDeps());
 		expect(listResult.stdout).toContain("[pool:free]");
 		expect(existsSync(join(`${root}__feat1`, "ensured"))).toBe(true);
+		expect(readFileSync(join(`${root}__feat1`, ".env"), "utf8")).toBe("ensured-copy\n");
 
+		rmSync(`${root}__feat1`, {recursive: true, force: true});
+		await run(["git", "-C", root, "worktree", "prune"]);
 		const blocked = await dispatch(
 			"remove",
 			["--cwd", root, "--self", `${root}__feat1`, "--json"],
@@ -1730,6 +1833,26 @@ integrationDescribe("wktree ensure", () => {
 			reason: "dirty_slot",
 			worktree_path: `${root}__feat1`,
 		});
+		expect(readFileSync(join(`${root}__feat1`, ".env"), "utf8")).toBe("ensured-copy\n");
+		expect((await run(["git", "-C", `${root}__feat1`, "status", "--porcelain", "--", ".env"])).stdout).toBe(
+			"",
+		);
+	});
+
+	test("pooled remove-triggered ensure copies into half-initialized slots", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeFileSync(join(root, ".env"), "half-remove-copy\n");
+		writeConfig(tmp, root, "touch ensured", 1, 'copy = [".env"]\n');
+		await createPoolSlot(root, 1, "wk-pool/feat1", false);
+
+		const blocked = await dispatch(
+			"remove",
+			["--cwd", root, "--self", `${root}__feat1`, "--json"],
+			testDeps(),
+		);
+
+		expect(blocked.exitCode).toBe(EXIT_CODES.UNSAFE);
+		expect(readFileSync(join(`${root}__feat1`, ".env"), "utf8")).toBe("half-remove-copy\n");
 	});
 });
 

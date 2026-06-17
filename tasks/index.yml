@@ -17,7 +17,7 @@ tasks:
   - id: 4
     description: Integrate copy with worktree setup
     task_file: tasks/004-integrate-copy-with-worktree-setup.md
-    status: pending
+    status: complete
     blocked_by: [3]
   - id: 5
     description: Document copy setup usage

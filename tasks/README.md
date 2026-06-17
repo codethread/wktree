@@ -59,3 +59,9 @@ Append notes here. Do not rewrite earlier notes.
 - Directory destinations are treated as exact managed paths and are deleted/recreated on rerun after a git tracked-descendant preflight.
 - Exclude paths are de-duplicated and sorted for the JSON payload and shared exclude fence.
 - Deep review follow-up tightened destination handling: leading-`~` destinations are rejected, tracked ancestor paths fail as unsafe blocked outcomes, and file copies now use filesystem copy semantics to preserve modes.
+
+### Task 4 implementation notes — 2026-06-17
+
+- Worktree lifecycle paths now run the same copy setup engine before returning post-create scripts for non-pooled add and pooled allocation.
+- Pooled ensure runs copy setup inside the existing initialization rollback boundary before invoking the configured command, so list/remove-triggered initialization inherits the same behavior.
+- Existing explicit `wktree copy` tests that intentionally exercise invalid copy config now create the worktree before installing invalid copy config, because normal add setup now fails loudly on those same invalid configurations.

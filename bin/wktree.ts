@@ -536,12 +536,14 @@ async function rootCommand(args: string[], deps: Deps) {
 async function listCommand(args: string[], deps: Deps) {
 	const opts = parseOptions(args);
 	const cwd = requireOption(opts, "cwd");
+	const output = parseOutputMode(opts);
+	const machineDeps = withMachineJsonProgress(deps, output);
 	const config = readConfig();
-	const canonicalRoot = await resolveCanonicalRoot(deps.git, cwd);
+	const canonicalRoot = await resolveCanonicalRoot(machineDeps.git, cwd);
 	const project = findProjectForRoot(config, canonicalRoot);
-	if (project?.poolSize) await ensurePool(project, deps);
-	const worktrees = await listWorktrees(deps.git, cwd);
-	if (opts.json) return {stdout: `${JSON.stringify(worktrees.map(toListJson), null, 2)}\n`, exitCode: 0};
+	if (project?.poolSize) await ensurePool(project, machineDeps);
+	const worktrees = await listWorktrees(machineDeps.git, cwd);
+	if (output.json) return {stdout: `${JSON.stringify(worktrees.map(toListJson), null, 2)}\n`, exitCode: 0};
 	return {stdout: formatWorktreeList(worktrees), exitCode: 0};
 }
 
@@ -617,6 +619,14 @@ async function addCommand(args: string[], deps: Deps) {
 			branch,
 			progress: machineDeps.progress,
 		});
+		if (project) {
+			await runCopySetup({
+				git: machineDeps.git,
+				root: canonicalRoot,
+				target: worktreePath,
+				entries: project.copy,
+			});
+		}
 
 		const postCreateScriptPath = project
 			? writePostCreateScript({project, root: canonicalRoot, created: worktreePath, branch, pooled: false})
@@ -736,6 +746,7 @@ async function allocatePooledSlot(options: {
 		progress: deps.progress,
 	});
 	await mergeOriginIfPresent({git: deps.git, worktreePath: slot.path, branch, progress: deps.progress});
+	await runCopySetup({git: deps.git, root, target: slot.path, entries: project.copy});
 	const postCreateScriptPath = writePostCreateScript({
 		project,
 		root,
@@ -1101,6 +1112,7 @@ async function ensurePool(
 			pooled: true,
 		});
 		try {
+			await runCopySetup({git: deps.git, root, target: slot.path, entries: project.copy});
 			await deps.hooks.runInline(postCreateScriptPath, slot.path, {}, (stream, line) =>
 				deps.progress.stream(stream, line),
 			);
