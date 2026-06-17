@@ -53,6 +53,7 @@ wktree remove --cwd <path> (--branch <branch> | --self <path>) [--json] [--force
 wktree ensure --cwd <path>
 wktree status --cwd <path>
 wktree recycle --cwd <path> --slot <path> [--force]
+wktree copy --cwd <path> [--json]
 ```
 
 Machine consumers should prefer `--json` where available and branch on payload `kind` rather than stderr text.

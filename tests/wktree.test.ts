@@ -77,7 +77,7 @@ pool_size = 5
 		]);
 	});
 
-	test("parses a valid non-pooled project with default name", () => {
+	test("parses a valid non-pooled project with default name and no copy field", () => {
 		const config = parseConfig(`
 [[project]]
 root = "./relative/repo"
@@ -87,6 +87,17 @@ command = "echo ready"
 		expect(config.projects).toEqual([
 			{name: "repo", root: resolve("./relative/repo"), command: "echo ready", poolSize: null},
 		]);
+	});
+
+	test("rejects present copy field until copy entries are implemented", () => {
+		expect(() =>
+			parseConfig(`
+[[project]]
+root = "/tmp/repo"
+command = "echo ok"
+copy = [".env"]
+`),
+		).toThrow("copy` is not implemented yet");
 	});
 
 	test("parses mixed pooled and non-pooled projects", () => {
@@ -528,6 +539,74 @@ integrationDescribe("wktree non-pool add", () => {
 		await expect(
 			dispatch("add", ["--cwd", root, "--branch", "wk-pool/feat1", "--json"], deps),
 		).rejects.toThrow("reserved");
+	});
+});
+
+integrationDescribe("wktree copy", () => {
+	let tmp: string;
+	let originalConfigHome: string | undefined;
+
+	beforeEach(() => {
+		tmp = mkdtempSync(join(tmpdir(), "wktree-copy-test-"));
+		originalConfigHome = process.env.XDG_CONFIG_HOME;
+	});
+
+	afterEach(() => {
+		if (originalConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+		else process.env.XDG_CONFIG_HOME = originalConfigHome;
+		rmSync(tmp, {recursive: true, force: true});
+	});
+
+	test("reports ready JSON for a non-canonical worktree with no copy config", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/copy", "--json"], deps);
+		const worktreePath = `${root}__feature--copy`;
+
+		const nestedCwd = join(worktreePath, "nested", "dir");
+		mkdirSync(nestedCwd, {recursive: true});
+
+		const result = await dispatch("copy", ["--cwd", nestedCwd, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(JSON.parse(result.stdout ?? "{}")).toEqual({
+			kind: "ready",
+			root,
+			worktree_path: worktreePath,
+			copied: [],
+			exclude_paths: [],
+		});
+	});
+
+	test("refuses canonical root with JSON blocked payload", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+
+		const result = await dispatch("copy", ["--cwd", root, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.UNSAFE);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			kind: "blocked",
+			reason: "canonical_root",
+		});
+	});
+
+	test("fails loudly through copy command when copy config is present", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		await run(["git", "-C", root, "branch", "feature/copy-present"]);
+		const worktreePath = `${root}__feature--copy-present`;
+		await run(["git", "-C", root, "worktree", "add", worktreePath, "feature/copy-present"]);
+		const configHome = join(tmp, "config");
+		mkdirSync(join(configHome, "ct-worktrees"), {recursive: true});
+		writeFileSync(
+			join(configHome, "ct-worktrees", "trees.toml"),
+			`[[project]]\nroot = "${root}"\ncommand = "echo ready"\ncopy = [".env"]\n`,
+		);
+		process.env.XDG_CONFIG_HOME = configHome;
+
+		await expect(dispatch("copy", ["--cwd", worktreePath, "--json"], deps)).rejects.toThrow(
+			"copy` is not implemented yet",
+		);
 	});
 });
 

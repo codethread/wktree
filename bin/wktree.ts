@@ -282,6 +282,7 @@ Subcommands:
   ensure    Materialise pooled worktree slots
   status    Print pool status JSON
   recycle   Recycle a pooled slot
+  copy      Re-run configured copy setup
 
 Options:
   -h, --help  Show this help message
@@ -323,6 +324,8 @@ export async function dispatch(
 			return ensureCommand(args, deps);
 		case "recycle":
 			return recycleCommand(args, deps);
+		case "copy":
+			return copyCommand(args, deps);
 		default:
 			return {stderr: USAGE, exitCode: EXIT_CODES.USAGE};
 	}
@@ -418,6 +421,15 @@ async function main() {
 			await runAction("recycle", optsToArgs(opts), deps);
 		});
 
+	program
+		.command("copy")
+		.description("Re-run configured copy setup")
+		.requiredOption("--cwd <path>", "Path within git repository")
+		.option("--json", "Machine-readable output")
+		.action(async (opts) => {
+			await runAction("copy", optsToArgs(opts), deps);
+		});
+
 	try {
 		await program.parseAsync(Bun.argv);
 	} catch (error) {
@@ -492,6 +504,10 @@ function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string
 	const nameValue = entry.name;
 	if (nameValue !== undefined && typeof nameValue !== "string") {
 		throw new ConfigError(`${label}: optional field \`name\` must be a string when present`);
+	}
+
+	if ("copy" in entry) {
+		throw new ConfigError(`${label}: optional field \`copy\` is not implemented yet`);
 	}
 
 	const poolSize = parsePoolSize(entry.pool_size, label);
@@ -959,6 +975,31 @@ async function recycleCommand(args: string[], deps: Deps) {
 	return {exitCode: 0};
 }
 
+async function copyCommand(args: string[], deps: Deps) {
+	const opts = parseOptions(args);
+	const cwd = requireOption(opts, "cwd");
+	const output = parseOutputMode(opts);
+	try {
+		readConfig();
+		const worktrees = await listWorktrees(deps.git, cwd);
+		const canonical = worktrees.find((worktree) => worktree.canonical);
+		if (!canonical) throw new WktreeError("couldn't determine canonical worktree");
+		const target = resolveWorktreeContainingPath(worktrees, cwd);
+		if (!target) throw new UsageError(`no worktree contains cwd: ${cwd}`);
+		if (normalizeExistingPath(target.path) === normalizeExistingPath(canonical.path)) {
+			throw new CanonicalRootError("refusing to copy setup into canonical root");
+		}
+		return finalizeStructuredResult(
+			{kind: "ready", root: canonical.path, worktree_path: target.path, copied: [], exclude_paths: []},
+			output,
+		);
+	} catch (error) {
+		const blocked = toBlockedCommandResult(error, output, {});
+		if (blocked) return blocked;
+		throw error;
+	}
+}
+
 async function recycleSlot(options: {
 	git: GitRunner;
 	project: ProjectConfig;
@@ -1249,7 +1290,7 @@ function parseOutputMode(opts: Record<string, string | boolean>): OutputMode {
 }
 
 function finalizeStructuredResult(
-	payload: ReadyAddPayload | ReadyRemovePayload | PoolFullPayload | BlockedPayload,
+	payload: object,
 	output: OutputMode,
 	exitCode: number = EXIT_CODES.SUCCESS,
 ): CommandResult {
@@ -1370,6 +1411,17 @@ async function resolveCanonicalRoot(git: GitRunner, cwd: string): Promise<string
 	const canonical = worktrees.find((worktree) => worktree.canonical);
 	if (!canonical) throw new WktreeError("couldn't determine canonical worktree");
 	return canonical.path;
+}
+
+function resolveWorktreeContainingPath(worktrees: Worktree[], cwd: string): Worktree | undefined {
+	const normalizedCwd = normalizeExistingPath(resolve(cwd));
+	return worktrees
+		.filter((worktree) => pathContains(normalizeExistingPath(worktree.path), normalizedCwd))
+		.sort((left, right) => right.path.length - left.path.length)[0];
+}
+
+function pathContains(parent: string, child: string): boolean {
+	return child === parent || child.startsWith(`${parent}/`);
 }
 
 type WorktreeMetadata = {

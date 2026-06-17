@@ -40,3 +40,8 @@ Append notes here. Do not rewrite earlier notes.
 - Task 4 explicitly covers copy setup through `list` and pooled `remove` because those commands can initialize pool slots.
 - Task 5 now cautions against changing the whole spec status unless the whole spec matches implementation reality.
 - Copy failure semantics were pinned down after cohesion review: malformed copy config, invalid paths, and missing sources are usage/config failures with exit code 12 and no structured stdout payload; tracked destination overlap is an unsafe blocked JSON outcome with exit code 11.
+
+### Task 1 implementation notes — 2026-06-17
+
+- The interim parser rejects any present `copy` field at config-load time with a `ConfigError`; later copy-entry slices should replace this boundary rejection with real parsing.
+- The `copy` skeleton resolves the target from `git worktree list --porcelain` by longest containing path, refuses the canonical root with the existing unsafe blocked JSON path, and emits an empty ready payload for non-canonical worktrees.
