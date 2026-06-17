@@ -883,6 +883,38 @@ integrationDescribe("wktree copy", () => {
 		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "unsafe"});
 	});
 
+	test("untracked file inside tracked directory destination is allowed", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeFileSync(join(root, "source.txt"), "source\n");
+		mkdirSync(join(root, ".claude"));
+		writeFileSync(join(root, ".claude", "settings.json"), '{"tracked":true}\n');
+		await run(["git", "-C", root, "add", "source.txt", ".claude/settings.json"]);
+		await run(["git", "-C", root, "commit", "-m", "track claude settings"]);
+		await run(["git", "-C", root, "push", "origin", "main"]);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/tracked-dir-ancestor", "--json"], deps);
+		writeConfig(
+			tmp,
+			root,
+			"echo ready",
+			undefined,
+			'copy = [{ from = "source.txt", to = ".claude/settings.local.json" }]\n',
+		);
+		const worktreePath = `${root}__feature--tracked-dir-ancestor`;
+
+		const result = await dispatch("copy", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(readFileSync(join(worktreePath, ".claude", "settings.local.json"), "utf8")).toBe("source\n");
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			kind: "ready",
+			root,
+			worktree_path: worktreePath,
+			copied: [{from: join(root, "source.txt"), to: ".claude/settings.local.json", type: "file"}],
+			exclude_paths: [".claude/settings.local.json"],
+		});
+	});
+
 	test("deduplicates exclude paths across entries and multi-target destinations", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeFileSync(join(root, ".env"), "one\n");

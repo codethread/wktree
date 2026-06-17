@@ -1768,8 +1768,17 @@ async function assertDestinationUntracked(git: GitRunner, target: string, path: 
 	const parts = path.split("/");
 	for (let length = 1; length < parts.length; length++) {
 		const ancestor = parts.slice(0, length).join("/");
-		const trackedAncestor = await git.runRaw(["-C", target, "ls-files", "--error-unmatch", "--", ancestor]);
-		if (trackedAncestor.exitCode === 0) {
+		const trackedDirectory = await git.runRaw(["-C", target, "ls-tree", "-d", "HEAD", "--", ancestor]);
+		if (trackedDirectory.stdout.trim() !== "") continue;
+		const trackedFileAncestor = await git.runRaw([
+			"-C",
+			target,
+			"ls-files",
+			"--error-unmatch",
+			"--",
+			ancestor,
+		]);
+		if (trackedFileAncestor.exitCode === 0) {
 			throw new UnsafeOperationError(`copy destination has tracked git ancestor: ${ancestor}`);
 		}
 	}
