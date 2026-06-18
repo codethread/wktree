@@ -1,7 +1,7 @@
 # Git Worktrees Engine
 
 **Status:** Implemented  
-**Last Updated:** 2026-06-17
+**Last Updated:** 2026-06-18
 
 ## 1. Overview
 
@@ -136,23 +136,27 @@ until a later successful run.
 
 ### Copy setup
 
-A project's optional `copy` configuration copies local files or directories into a target
-worktree. Copy entries are deterministic and rerunnable:
+A project's optional `copy` configuration copies or symlinks local files or directories into a
+target worktree. Copy entries are deterministic and rerunnable:
 
-- String entries are relative paths copied from the canonical root to the same relative path
-  in the target worktree.
+- String entries are relative paths materialized from the canonical root to the same relative path
+  in the target worktree using the project `copy_mode_default`, which defaults to `copy`.
 - Object entries use `from` and `to`; `from` may be relative to the canonical root, absolute,
-  or start with `~`, while `to` is always relative to the target worktree.
+  or start with `~`, while `to` is always relative to the target worktree. Object entries may
+  set `mode = "copy"` or `mode = "symlink"`, overriding `copy_mode_default` for that entry.
 - `to` may be a string or array of strings. Each destination is the exact final file or
   directory path, not a parent directory for nesting the source basename.
 - Only leading `~` expands. Globs, environment variables, and shell interpolation are not
   supported.
 - Missing sources, absolute destinations, and destinations that overlap tracked files fail
   loudly.
+- Copy mode requires sources to be regular files or directories. Symlink mode creates each
+  destination as a symlink to the resolved source target, avoiding symlink chains through the
+  canonical root.
 - Each destination path is fully engine-managed. Reruns delete the existing destination path
-  before copying, then recreate it from the source, so removed source files do not leave
-  stale copied files behind. This may delete untracked local additions under a copied
-  directory; tracked files or tracked descendants still block the operation.
+  before materializing it from the source, so removed source files do not leave stale copied
+  files behind. This may delete untracked local additions under a copied directory; tracked
+  files or tracked descendants still block the operation.
 
 Every configured destination is also written once to the canonical repository's shared
 exclude file: the real canonical-root `.git/info/exclude` file, following symlinks if
@@ -279,7 +283,8 @@ are unsafe refusals with exit code `11`; with `--json`, they emit a blocked payl
   "worktree_path": "/repo__feature--foo",
   "copied": [
     {"from": "/repo/.env", "to": ".env", "type": "file"},
-    {"from": "/Users/me/my/repo/skill-dir", "to": ".claude/skills/skill-dir", "type": "directory"}
+    {"from": "/Users/me/my/repo/skill-dir", "to": ".claude/skills/skill-dir", "type": "directory"},
+    {"from": "/Users/me/secrets/app.env", "to": ".env.shared", "type": "symlink"}
   ],
   "exclude_paths": [".env", ".claude/skills/skill-dir"]
 }
@@ -298,7 +303,8 @@ entry may define:
 | `command` | yes | Bootstrap command run as the post-create script. |
 | `name` | no | Project identifier; defaults to the basename of `root`. |
 | `pool_size` | no | Enables pooled mode with this many fixed slots. |
-| `copy` | no | Files or directories to copy into created worktrees before `command` runs. |
+| `copy_mode_default` | no | `copy` or `symlink`; defaults to `copy` and applies to all copy entries unless overridden. |
+| `copy` | no | Files or directories to copy or symlink into created worktrees before `command` runs. |
 
 Bootstrap scripts run under bash with `WK_ROOT` and `WK_CREATED` exported (see §3).
 
@@ -309,8 +315,10 @@ Example:
 name = "example"
 root = "~/dev/example"
 command = "bun install"
+copy_mode_default = "copy"
 copy = [
   ".env",
   { from = "~/my/repo/skill-dir", to = [".claude/skills/skill-dir", ".pi/agents/skill-dir"] },
+  { from = ".env.shared", to = ".env.shared", mode = "symlink" },
 ]
 ```

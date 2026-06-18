@@ -19,6 +19,7 @@ import {
 	readSync,
 	realpathSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import {homedir, tmpdir} from "node:os";
@@ -41,11 +42,13 @@ export interface ProjectConfig {
 	root: string;
 	command: string;
 	poolSize: number | null;
+	copyModeDefault: CopyMode;
 	copy: CopyEntry[];
 }
 
-export type CopyEntry = {from: string; to: string[]};
-export type CopiedFile = {from: string; to: string; type: "file" | "directory"};
+export type CopyMode = "copy" | "symlink";
+export type CopyEntry = {from: string; to: string[]; mode: CopyMode};
+export type CopiedFile = {from: string; to: string; type: "file" | "directory" | "symlink"};
 
 export type TreesConfig = {projects: ProjectConfig[]};
 
@@ -518,7 +521,8 @@ function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string
 		throw new ConfigError(`${label}: optional field \`name\` must be a string when present`);
 	}
 
-	const copy = parseCopyEntries(entry.copy, label);
+	const copyModeDefault = parseCopyMode(entry.copy_mode_default, `${label}: copy_mode_default`);
+	const copy = parseCopyEntries(entry.copy, label, copyModeDefault);
 
 	const poolSize = parsePoolSize(entry.pool_size, label);
 	return {
@@ -526,6 +530,7 @@ function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string
 		root,
 		command: commandValue,
 		poolSize,
+		copyModeDefault,
 		copy,
 	};
 }
@@ -1682,7 +1687,7 @@ function normalizeExistingPath(path: string): string {
 	return existsSync(path) ? realpathSync(path) : path;
 }
 
-function parseCopyEntries(value: unknown, label: string): CopyEntry[] {
+function parseCopyEntries(value: unknown, label: string, defaultMode: CopyMode): CopyEntry[] {
 	if (value === undefined) return [];
 	if (!Array.isArray(value)) throw new ConfigError(`${label}: optional field \`copy\` must be an array`);
 	return value.map((entry, index) => {
@@ -1691,12 +1696,22 @@ function parseCopyEntries(value: unknown, label: string): CopyEntry[] {
 			if (typeof entry.from !== "string" || entry.from.trim() === "") {
 				throw new ConfigError(`${entryLabel}: required field \`from\` is missing or empty`);
 			}
-			return {from: entry.from, to: parseCopyDestinations(entry.to, entryLabel)};
+			return {
+				from: entry.from,
+				to: parseCopyDestinations(entry.to, entryLabel),
+				mode: parseCopyMode(entry.mode, `${entryLabel}: mode`, defaultMode),
+			};
 		}
 		if (typeof entry !== "string") throw new ConfigError(`${entryLabel}: expected a string path`);
 		const path = parseRelativeCopyPath(entry, entryLabel);
-		return {from: path, to: [path]};
+		return {from: path, to: [path], mode: defaultMode};
 	});
+}
+
+function parseCopyMode(value: unknown, label: string, fallback: CopyMode = "copy"): CopyMode {
+	if (value === undefined) return fallback;
+	if (value === "copy" || value === "symlink") return value;
+	throw new ConfigError(`${label} must be "copy" or "symlink"`);
 }
 
 function parseCopyDestinations(value: unknown, label: string): string[] {
@@ -1727,6 +1742,15 @@ function resolveCopySource(root: string, from: string): string {
 	return expandLeadingHome(from) ?? (isAbsolute(from) ? from : resolve(root, from));
 }
 
+function lstatExists(path: string): boolean {
+	try {
+		lstatSync(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 async function runCopySetup(options: {
 	git: GitRunner;
 	root: string;
@@ -1734,24 +1758,32 @@ async function runCopySetup(options: {
 	entries: CopyEntry[];
 }): Promise<CopiedFile[]> {
 	const {git, root, target, entries} = options;
-	const plans: Array<{source: string; to: string; destination: string; type: "file" | "directory"}> = [];
+	const plans: Array<{
+		source: string;
+		to: string;
+		destination: string;
+		type: "file" | "directory" | "symlink";
+	}> = [];
 	for (const entry of entries) {
 		const source = resolveCopySource(root, entry.from);
 		if (!existsSync(source)) throw new ConfigError(`copy source does not exist: ${entry.from}`);
 		const stat = lstatSync(source);
-		if (!stat.isFile() && !stat.isDirectory()) {
+		const type = entry.mode === "symlink" ? "symlink" : stat.isDirectory() ? "directory" : "file";
+		if (entry.mode === "copy" && !stat.isFile() && !stat.isDirectory()) {
 			throw new ConfigError(`copy source is not a regular file or directory: ${entry.from}`);
 		}
-		const type = stat.isDirectory() ? "directory" : "file";
+		const materializedSource = entry.mode === "symlink" ? realpathSync(source) : source;
 		for (const to of entry.to) {
 			await assertDestinationUntracked(git, target, to);
-			plans.push({source, to, destination: resolve(target, to), type});
+			plans.push({source: materializedSource, to, destination: resolve(target, to), type});
 		}
 	}
 	for (const plan of plans) {
 		mkdirSync(dirname(plan.destination), {recursive: true});
-		if (existsSync(plan.destination)) rmSync(plan.destination, {recursive: true, force: true});
-		cpSync(plan.source, plan.destination, {recursive: plan.type === "directory"});
+		if (existsSync(plan.destination) || lstatExists(plan.destination))
+			rmSync(plan.destination, {recursive: true, force: true});
+		if (plan.type === "symlink") symlinkSync(plan.source, plan.destination);
+		else cpSync(plan.source, plan.destination, {recursive: plan.type === "directory"});
 	}
 	await writeCopyExcludeBlock(
 		git,

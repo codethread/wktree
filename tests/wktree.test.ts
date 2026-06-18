@@ -3,9 +3,11 @@ import {
 	chmodSync,
 	cpSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	readlinkSync,
 	realpathSync,
 	rmSync,
 	symlinkSync,
@@ -74,7 +76,14 @@ pool_size = 5
 `);
 
 		expect(config.projects).toEqual([
-			{name: "app", root: resolve(homedir(), "work/app"), command: "yarn install", poolSize: 5, copy: []},
+			{
+				name: "app",
+				root: resolve(homedir(), "work/app"),
+				command: "yarn install",
+				poolSize: 5,
+				copyModeDefault: "copy",
+				copy: [],
+			},
 		]);
 	});
 
@@ -86,7 +95,14 @@ command = "echo ready"
 `);
 
 		expect(config.projects).toEqual([
-			{name: "repo", root: resolve("./relative/repo"), command: "echo ready", poolSize: null, copy: []},
+			{
+				name: "repo",
+				root: resolve("./relative/repo"),
+				command: "echo ready",
+				poolSize: null,
+				copyModeDefault: "copy",
+				copy: [],
+			},
 		]);
 	});
 
@@ -98,7 +114,7 @@ root = "/tmp/repo"
 command = "echo ok"
 copy = [".env"]
 `).projects[0]?.copy,
-		).toEqual([{from: ".env", to: [".env"]}]);
+		).toEqual([{from: ".env", to: [".env"], mode: "copy"}]);
 	});
 
 	test("parses object copy entries with single and multiple destinations", () => {
@@ -109,7 +125,23 @@ root = "/tmp/repo"
 command = "echo ok"
 copy = [{ from = ".env", to = [".env.local", ".env.test"] }]
 `).projects[0]?.copy,
-		).toEqual([{from: ".env", to: [".env.local", ".env.test"]}]);
+		).toEqual([{from: ".env", to: [".env.local", ".env.test"], mode: "copy"}]);
+	});
+
+	test("parses project copy mode default and per-entry overrides", () => {
+		const project = parseConfig(`
+[[project]]
+root = "/tmp/repo"
+command = "echo ok"
+copy_mode_default = "symlink"
+copy = [".env", { from = "local.env", to = "local.env", mode = "copy" }]
+`).projects[0];
+
+		expect(project?.copyModeDefault).toBe("symlink");
+		expect(project?.copy).toEqual([
+			{from: ".env", to: [".env"], mode: "symlink"},
+			{from: "local.env", to: ["local.env"], mode: "copy"},
+		]);
 	});
 
 	test("parses mixed pooled and non-pooled projects", () => {
@@ -142,6 +174,7 @@ future_field = "ignored"
 			root: "/tmp/unknown",
 			command: "echo ok",
 			poolSize: null,
+			copyModeDefault: "copy",
 			copy: [],
 		});
 	});
@@ -737,7 +770,7 @@ integrationDescribe("wktree copy", () => {
 		});
 	});
 
-	test("symlink source files fail as config errors", async () => {
+	test("symlink source files fail as config errors in copy mode", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeFileSync(join(root, ".env.real"), "real\n");
 		symlinkSync(".env.real", join(root, ".env.link"));
@@ -751,6 +784,27 @@ integrationDescribe("wktree copy", () => {
 			message: expect.stringContaining("not a regular file"),
 			exitCode: EXIT_CODES.USAGE,
 		});
+	});
+
+	test("symlink mode creates destination symlinks to resolved source targets", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		const externalTarget = join(tmp, "external.env");
+		writeFileSync(externalTarget, "external\n");
+		symlinkSync(externalTarget, join(root, ".env"));
+		writeConfig(tmp, root, "echo ready", undefined, 'copy_mode_default = "symlink"\ncopy = [".env"]\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/symlink-mode", "--json"], deps);
+		const worktreePath = `${root}__feature--symlink-mode`;
+
+		const result = await dispatch("copy", ["--cwd", worktreePath, "--json"], deps);
+		const destination = join(worktreePath, ".env");
+
+		expect(lstatSync(destination).isSymbolicLink()).toBe(true);
+		const resolvedTarget = realpathSync(externalTarget);
+		expect(readlinkSync(destination)).toBe(resolvedTarget);
+		expect(readFileSync(destination, "utf8")).toBe("external\n");
+		expect(JSON.parse(result.stdout ?? "{}").copied).toEqual([
+			{from: resolvedTarget, to: ".env", type: "symlink"},
+		]);
 	});
 
 	test("copy preflights all entries before replacing destinations", async () => {
@@ -1163,7 +1217,7 @@ integrationDescribe("wktree pool status", () => {
 		);
 
 		const state = await buildPoolState(
-			{name: "repo", root, command: "echo ready", poolSize: 2, copy: []},
+			{name: "repo", root, command: "echo ready", poolSize: 2, copyModeDefault: "copy", copy: []},
 			worktrees,
 			new LiveGitRunner(),
 		);
