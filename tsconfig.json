@@ -23,6 +23,6 @@
 		"noUnusedParameters": false,
 		"noPropertyAccessFromIndexSignature": false
 	},
-	"include": ["bin/**/*.ts", "shared/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+	"include": ["bin/**/*.ts", "src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
 	"exclude": ["node_modules", "dist"]
 }

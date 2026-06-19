@@ -15,7 +15,14 @@ import {
 } from "node:fs";
 import {homedir, tmpdir} from "node:os";
 import {basename, join, resolve} from "node:path";
-import type {Deps} from "../bin/wktree";
+import {LiveGitRunner} from "../src/git/executor";
+import {
+	branchExistsInList,
+	parseTrunkFromRemoteShow,
+	parseTrunkFromSymbolicRef,
+	parseWorktreeList,
+} from "../src/git/worktrees";
+import type {Deps} from "../src/main";
 import {
 	buildPoolState,
 	ConfigError,
@@ -26,14 +33,7 @@ import {
 	LiveHookRunner,
 	PickerCancelled,
 	parseConfig,
-} from "../bin/wktree";
-import {LiveGitRunner} from "../shared/git/executor";
-import {
-	branchExistsInList,
-	parseTrunkFromRemoteShow,
-	parseTrunkFromSymbolicRef,
-	parseWorktreeList,
-} from "../shared/git/worktrees";
+} from "../src/main";
 
 const integrationDescribe = process.env.WKTREE_SKIP_INTEGRATION === "1" ? describe.skip : describe;
 

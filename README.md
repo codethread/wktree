@@ -15,9 +15,12 @@ See [`specs/git-worktrees.md`](./specs/git-worktrees.md) for the durable design 
 
 ## Repository layout
 
-- `bin/wktree.ts` — TypeScript CLI and engine behavior.
-- `shared/git/` — git execution abstractions and worktree parsers.
-- `shared/fzf.ts` — interactive picker helper.
+- `bin/wktree.ts` — thin executable entrypoint.
+- `src/main.ts` — exported engine/dispatch behavior used by tests and consumers.
+- `src/cli.ts` — Commander-based process CLI wiring.
+- `src/config.ts` and `src/schemas.ts` — TOML config parsing and validation schemas.
+- `src/git/` — git execution abstractions and worktree parsers.
+- `src/fzf.ts` — interactive picker helper.
 - `nu/wktree/` — Nushell wrapper and tmux workflow integration.
 - `tests/` — Bun tests for engine and wrapper behavior.
 - `scripts/build-bin.ts` — builds the `~/.local/bin/wktree` wrapper.
