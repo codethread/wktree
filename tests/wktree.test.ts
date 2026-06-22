@@ -648,6 +648,26 @@ integrationDescribe("wktree non-pool add", () => {
 		expect(JSON.parse(result.stdout ?? "{}").worktree_path).toBe(`${root}__${branch.replaceAll("/", "--")}`);
 	});
 
+	test("fresh_canonical preserves existing branch add behavior after policy fetch", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		await run(["git", "-C", root, "branch", "feature/existing-fresh"]);
+		writeConfig(tmp, root, "echo ready", undefined, '[project.add]\npolicy = "fresh_canonical"\n');
+		writeFileSync(join(root, "dirty-canonical.txt"), "dirty\n");
+
+		const result = await dispatch(
+			"add",
+			["--cwd", root, "--branch", "feature/existing-fresh", "--json"],
+			deps,
+		);
+
+		expect(result.exitCode).toBe(0);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			kind: "ready",
+			worktree_path: `${root}__feature--existing-fresh`,
+			created_new_branch: false,
+		});
+	});
+
 	test("warns but succeeds when local branch has diverged from remote", async () => {
 		const {root, remote} = await initRepoWithOrigin(tmp);
 		await createRemoteBranch(remote, "feature/diverged");
@@ -682,6 +702,102 @@ integrationDescribe("wktree non-pool add", () => {
 			{stdout: "pipe", stderr: "pipe"},
 		).exited;
 		expect(missing).not.toBe(0);
+	});
+
+	test("origin_default creates new branches from fetched origin default without mutating canonical root", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+		await commitOnRemoteDefault({
+			remote,
+			path: "remote-only.txt",
+			content: "remote default\n",
+			message: "remote default update",
+		});
+		const originalHead = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim();
+
+		await dispatch("add", ["--cwd", root, "--branch", "feature/origin-default", "--json"], deps);
+
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(originalHead);
+		expect(
+			(await run(["git", "-C", `${root}__feature--origin-default`, "show", "HEAD:remote-only.txt"])).stdout,
+		).toBe("remote default\n");
+	});
+
+	test("fresh_canonical fast-forwards clean canonical default before creating a branch", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, '[project.add]\npolicy = "fresh_canonical"\n');
+		await commitOnRemoteDefault({
+			remote,
+			path: "fresh.txt",
+			content: "fresh\n",
+			message: "fresh default update",
+		});
+
+		await dispatch("add", ["--cwd", root, "--branch", "feature/fresh", "--json"], deps);
+
+		expect((await run(["git", "-C", root, "show", "HEAD:fresh.txt"])).stdout).toBe("fresh\n");
+		expect((await run(["git", "-C", `${root}__feature--fresh`, "show", "HEAD:fresh.txt"])).stdout).toBe(
+			"fresh\n",
+		);
+	});
+
+	test("fresh_canonical blocks dirty canonical root with JSON reason", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, '[project.add]\npolicy = "fresh_canonical"\n');
+		await commitOnRemoteDefault({
+			remote,
+			path: "dirty-block.txt",
+			content: "remote\n",
+			message: "dirty block update",
+		});
+		writeFileSync(join(root, "dirty.txt"), "dirty\n");
+
+		const result = await dispatch("add", ["--cwd", root, "--branch", "feature/dirty-block", "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "dirty_canonical"});
+		expect(existsSync(`${root}__feature--dirty-block`)).toBe(false);
+	});
+
+	test("fresh_canonical blocks wrong canonical branch with JSON reason", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, '[project.add]\npolicy = "fresh_canonical"\n');
+		await commitOnRemoteDefault({
+			remote,
+			path: "wrong-branch.txt",
+			content: "remote\n",
+			message: "wrong branch update",
+		});
+		await run(["git", "-C", root, "checkout", "-b", "other"]);
+
+		const result = await dispatch("add", ["--cwd", root, "--branch", "feature/wrong-branch", "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			kind: "blocked",
+			reason: "wrong_canonical_branch",
+		});
+		expect(existsSync(`${root}__feature--wrong-branch`)).toBe(false);
+	});
+
+	test("fresh_canonical blocks non-fast-forward canonical update with JSON reason", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, '[project.add]\npolicy = "fresh_canonical"\n');
+		await commitOnRemoteDefault({
+			remote,
+			path: "non-ff-remote.txt",
+			content: "remote\n",
+			message: "non ff remote update",
+		});
+		writeFileSync(join(root, "local-main.txt"), "local\n");
+		await run(["git", "-C", root, "add", "local-main.txt"]);
+		await run(["git", "-C", root, "commit", "-m", "local main update"]);
+
+		const result = await dispatch("add", ["--cwd", root, "--branch", "feature/non-ff", "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "non_ff_canonical"});
+		expect(existsSync(`${root}__feature--non-ff`)).toBe(false);
 	});
 
 	test("uses --base for a new branch and warns when --base is ignored for existing branch", async () => {
@@ -2269,6 +2385,26 @@ async function createRemoteBranch(remote: string, branch: string) {
 		await run(["git", "-C", clone, "add", "remote.txt"]);
 		await run(["git", "-C", clone, "commit", "-m", `remote ${branch}`]);
 		await run(["git", "-C", clone, "push", "origin", branch]);
+	} finally {
+		rmSync(clone, {recursive: true, force: true});
+	}
+}
+
+async function commitOnRemoteDefault(change: {
+	remote: string;
+	path: string;
+	content: string;
+	message: string;
+}) {
+	const clone = mkdtempSync(join(tmpdir(), "wktree-remote-default-"));
+	try {
+		await run(["git", "clone", change.remote, clone]);
+		await run(["git", "-C", clone, "config", "user.email", "test@example.test"]);
+		await run(["git", "-C", clone, "config", "user.name", "Test User"]);
+		writeFileSync(join(clone, change.path), change.content);
+		await run(["git", "-C", clone, "add", change.path]);
+		await run(["git", "-C", clone, "commit", "-m", change.message]);
+		await run(["git", "-C", clone, "push", "origin", "HEAD:main"]);
 	} finally {
 		rmSync(clone, {recursive: true, force: true});
 	}

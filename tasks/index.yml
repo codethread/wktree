@@ -32,7 +32,7 @@ tasks:
   - id: 7
     description: Enforce nonpooled add policy
     task_file: tasks/007-enforce-nonpooled-add-policy.md
-    status: pending
+    status: complete
     blocked_by: [6]
   - id: 8
     description: Apply add policy to pools and wrapper

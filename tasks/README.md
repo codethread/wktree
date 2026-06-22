@@ -93,3 +93,9 @@ Append notes here. Do not rewrite earlier notes.
 - Added policy parsing for defaults, root-glob rules, and exact project overrides, with field-by-field finish policy merging and `wktree config explain` JSON output.
 - Exact project entries can now omit `command` only when they are policy-only; pools/copy/bootstrap setup still require a command.
 - Root glob matching intentionally supports only leading `~/` expansion plus simple `*`/`**` matching; no environment or shell expansion was added.
+
+### Task 7 implementation notes — 2026-06-22
+
+- Non-pooled `add` now resolves the effective add policy before branch-state detection and always fetches origin first.
+- `origin_default` intentionally uses `origin/<default>` as the start point for new branches so fetched remote default commits are used without advancing the canonical root.
+- `fresh_canonical` blocks before worktree creation when the canonical root is dirty, on the wrong branch, or cannot fast-forward; JSON reasons are `dirty_canonical`, `wrong_canonical_branch`, and `non_ff_canonical`.

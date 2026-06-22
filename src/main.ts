@@ -32,9 +32,11 @@ import {
 	BlockedError,
 	CanonicalRootError,
 	ConfigError,
+	DirtyCanonicalError,
 	DirtySlotError,
 	DuplicateBranchError,
 	EXIT_CODES,
+	NonFastForwardCanonicalError,
 	PickerCancelled,
 	ReservedPrefixError,
 	TrunkDetectionError,
@@ -42,6 +44,7 @@ import {
 	UnsafeOperationError,
 	UsageError,
 	WktreeError,
+	WrongCanonicalBranchError,
 } from "./errors.ts";
 import type {GitRunner} from "./git/executor.ts";
 export {GitError} from "./git/executor.ts";
@@ -224,7 +227,8 @@ async function addCommand(args: string[], deps: Deps) {
 
 	try {
 		const canonicalRoot = await resolveCanonicalRoot(machineDeps.git, cwd);
-		const project = findProjectForRoot(readConfig(), canonicalRoot);
+		const config = readConfig();
+		const project = findProjectForRoot(config, canonicalRoot);
 		if (slotPath && !project?.poolSize) {
 			throw new UsageError("--slot is only valid for pooled projects");
 		}
@@ -248,10 +252,20 @@ async function addCommand(args: string[], deps: Deps) {
 
 		await machineDeps.git.run(["-C", canonicalRoot, "fetch", "origin"]);
 		const branchState = await detectBranchState(machineDeps.git, canonicalRoot, branch);
-		const defaultBase =
-			branchState === "none" && !base
-				? await detectOriginDefaultBranch(machineDeps.git, canonicalRoot)
-				: null;
+		let defaultBase: string | null = null;
+		if (branchState === "none") {
+			if (base) {
+				defaultBase = base;
+			} else {
+				const defaultBranch = await detectOriginDefaultBranch(machineDeps.git, canonicalRoot);
+				if (explainPolicy(config, canonicalRoot).addPolicy === "fresh_canonical") {
+					await fastForwardCanonicalDefault(machineDeps.git, canonicalRoot, defaultBranch);
+					defaultBase = defaultBranch;
+				} else {
+					defaultBase = `origin/${defaultBranch}`;
+				}
+			}
+		}
 		const originalBranchHead = await captureExistingBranchHead({
 			git: machineDeps.git,
 			root: canonicalRoot,
@@ -1000,6 +1014,30 @@ async function detectOriginDefaultBranch(git: GitRunner, root: string): Promise<
 	throw new TrunkDetectionError("couldn't determine origin default branch");
 }
 
+async function fastForwardCanonicalDefault(
+	git: GitRunner,
+	root: string,
+	defaultBranch: string,
+): Promise<void> {
+	const status = await git.run(["-C", root, "status", "--porcelain=v1"]);
+	if (status.stdout.trim() !== "") {
+		throw new DirtyCanonicalError("canonical root has uncommitted changes");
+	}
+	const current = (await git.run(["-C", root, "branch", "--show-current"])).stdout.trim();
+	if (current !== defaultBranch) {
+		throw new WrongCanonicalBranchError(
+			`canonical root must be checked out on ${defaultBranch}; currently on ${current || "detached HEAD"}`,
+		);
+	}
+	const ancestor = await git.runRaw(["-C", root, "merge-base", "--is-ancestor", "HEAD", `origin/${defaultBranch}`]);
+	if (ancestor.exitCode !== 0) {
+		throw new NonFastForwardCanonicalError(
+			`canonical root cannot fast-forward to origin/${defaultBranch}`,
+		);
+	}
+	await git.run(["-C", root, "merge", "--ff-only", `origin/${defaultBranch}`]);
+}
+
 async function addNonPoolWorktree(options: {
 	git: GitRunner;
 	root: string;
@@ -1024,6 +1062,12 @@ async function addNonPoolWorktree(options: {
 }
 
 async function resolveBaseRef(git: GitRunner, root: string, base: string): Promise<string> {
+	if (base.startsWith("origin/")) {
+		const remoteName = base.slice("origin/".length);
+		const remoteRef =
+			(await git.runRaw(["-C", root, "show-ref", "--verify", `refs/remotes/origin/${remoteName}`])).exitCode === 0;
+		if (remoteRef) return base;
+	}
 	const local = (await git.runRaw(["-C", root, "show-ref", "--verify", `refs/heads/${base}`])).exitCode === 0;
 	if (local) return base;
 	const remote =
@@ -1131,6 +1175,9 @@ function toBlockedPayload(
 	let reason = "blocked";
 	if (error instanceof DuplicateBranchError) reason = "duplicate_branch";
 	else if (error instanceof DirtySlotError) reason = "dirty_slot";
+	else if (error instanceof DirtyCanonicalError) reason = "dirty_canonical";
+	else if (error instanceof WrongCanonicalBranchError) reason = "wrong_canonical_branch";
+	else if (error instanceof NonFastForwardCanonicalError) reason = "non_ff_canonical";
 	else if (error instanceof UnmergedBranchError) reason = "unmerged_branch";
 	else if (error instanceof CanonicalRootError) reason = "canonical_root";
 	else if (error.exitCode === EXIT_CODES.UNSAFE) reason = "unsafe";
