@@ -1662,6 +1662,118 @@ integrationDescribe("wktree pooled add", () => {
 		rmSync(tmp, {recursive: true, force: true});
 	});
 
+	test("fresh_canonical blocks dirty canonical root before pooled slot allocation", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", 1, '[project.add]\npolicy = "fresh_canonical"\n');
+		await commitOnRemoteDefault({
+			remote,
+			path: "pooled-dirty-block.txt",
+			content: "remote\n",
+			message: "pooled dirty block update",
+		});
+		writeFileSync(join(root, "dirty.txt"), "dirty\n");
+
+		const result = await dispatch(
+			"add",
+			["--cwd", root, "--branch", "feature/pooled-dirty-block", "--json"],
+			testDeps(),
+		);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "dirty_canonical"});
+		expect(existsSync(`${root}__feat1`)).toBe(false);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/pooled-dirty-block"]))
+				.exitCode,
+		).not.toBe(0);
+	});
+
+	test("fresh_canonical fast-forwards canonical root before pooled branch checkout", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", 1, '[project.add]\npolicy = "fresh_canonical"\n');
+		await commitOnRemoteDefault({
+			remote,
+			path: "pooled-fresh.txt",
+			content: "fresh pooled\n",
+			message: "pooled fresh update",
+		});
+
+		await dispatch("add", ["--cwd", root, "--branch", "feature/pooled-fresh", "--json"], testDeps());
+
+		expect((await run(["git", "-C", root, "show", "HEAD:pooled-fresh.txt"])).stdout).toBe("fresh pooled\n");
+		expect((await run(["git", "-C", `${root}__feat1`, "show", "HEAD:pooled-fresh.txt"])).stdout).toBe(
+			"fresh pooled\n",
+		);
+		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
+			"feature/pooled-fresh",
+		);
+	});
+
+	test("origin_default pooled add uses fetched origin default without mutating canonical root", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", 1);
+		await commitOnRemoteDefault({
+			remote,
+			path: "pooled-origin-default.txt",
+			content: "origin default\n",
+			message: "pooled origin default update",
+		});
+		const originalHead = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim();
+
+		await dispatch("add", ["--cwd", root, "--branch", "feature/pooled-origin-default", "--json"], testDeps());
+
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(originalHead);
+		expect(
+			(await run(["git", "-C", `${root}__feat1`, "show", "HEAD:pooled-origin-default.txt"])).stdout,
+		).toBe("origin default\n");
+	});
+
+	test("fresh_canonical validates canonical root before honoring pooled explicit base", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		await createRemoteBranch(remote, "base/policy-check");
+		writeConfig(tmp, root, "echo ready", 1, '[project.add]\npolicy = "fresh_canonical"\n');
+		writeFileSync(join(root, "dirty.txt"), "dirty\n");
+
+		const result = await dispatch(
+			"add",
+			["--cwd", root, "--branch", "feature/pooled-base-block", "--base", "base/policy-check", "--json"],
+			testDeps(),
+		);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "dirty_canonical"});
+		expect(existsSync(`${root}__feat1`)).toBe(false);
+	});
+
+	test("fresh_canonical policy failure does not recycle an occupied pooled slot", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", 1, '[project.add]\npolicy = "fresh_canonical"\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/occupied", "--json"], testDeps());
+		await commitOnRemoteDefault({
+			remote,
+			path: "pooled-recycle-block.txt",
+			content: "remote\n",
+			message: "pooled recycle block update",
+		});
+		writeFileSync(join(root, "dirty.txt"), "dirty\n");
+
+		const result = await dispatch(
+			"add",
+			["--cwd", root, "--branch", "feature/blocked-recycle", "--json", "--slot", `${root}__feat1`, "--force"],
+			testDeps(),
+		);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "dirty_canonical"});
+		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
+			"feature/occupied",
+		);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/blocked-recycle"]))
+				.exitCode,
+		).not.toBe(0);
+	});
+
 	test("allocates the lowest initialized free slot and writes a pooled post-create script", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeConfig(tmp, root, "touch pooled-sentinel", 2);

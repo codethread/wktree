@@ -68,7 +68,7 @@ Import `nu/wktree/mod.nu` to get the human-facing commands:
 
 - `wk root`
 - `wk path <branch>`
-- `wk add <branch> [base] [--self] [--latest] [--force]`
+- `wk add <branch> [base] [--self] [--force]`
 - `wk remove <branch> | wk remove --self [--force]`
 - `wk copy [--json]`
 - `wk list [--json]`

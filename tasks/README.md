@@ -99,3 +99,9 @@ Append notes here. Do not rewrite earlier notes.
 - Non-pooled `add` now resolves the effective add policy before branch-state detection and always fetches origin first.
 - `origin_default` intentionally uses `origin/<default>` as the start point for new branches so fetched remote default commits are used without advancing the canonical root.
 - `fresh_canonical` blocks before worktree creation when the canonical root is dirty, on the wrong branch, or cannot fast-forward; JSON reasons are `dirty_canonical`, `wrong_canonical_branch`, and `non_ff_canonical`.
+
+### Task 8 implementation notes — 2026-06-22
+
+- Pooled `add` now resolves add freshness before pool initialization/recycle/allocation, so `fresh_canonical` failures stop before an occupied slot can be recycled.
+- Pooled new branches share the non-pooled base selection: `fresh_canonical` fast-forwards canonical root and starts from the default branch; `origin_default` starts from `origin/<default>` without mutating canonical root.
+- The Nushell wrapper no longer owns `--latest`/`git pull --ff-only`; freshness behavior is engine/config driven for both human and agent entry points.

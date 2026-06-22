@@ -1,6 +1,6 @@
 # Git Worktrees Engine
 
-**Status:** Partial — current lifecycle is implemented; policy-driven add freshness and `finish` are planned
+**Status:** Partial — current lifecycle, copy setup, and policy-driven add freshness are implemented; `finish` is planned
 **Last Updated:** 2026-06-22
 
 ## 1. Overview
@@ -196,7 +196,7 @@ preserves content outside it:
 When no copy destinations are configured, the fenced block is removed on the next copy-capable
 run.
 
-### Policy configuration (planned)
+### Policy configuration
 
 Policy configuration describes default behavior for repositories that may not need bootstrap
 commands or pools. It is resolved from three layers:
@@ -210,7 +210,7 @@ selection; copy paths keep their stricter no-glob contract. Exact project entrie
 place for bootstrap commands, pools, and copy setup, but they may also exist only to override
 policy for an exceptional repository.
 
-### Add freshness policy (planned)
+### Add freshness policy
 
 `add` policy controls how a new branch chooses its starting point and whether the canonical
 root must be up to date first:
@@ -272,7 +272,7 @@ their upstream-merge safety rules.
 | `wktree status --cwd <path>` | Print pool status JSON. |
 | `wktree recycle --cwd <path> --slot <path> [--force]` | Recycle a pooled slot. |
 | `wktree copy --cwd <path> [--json]` | Re-run configured copy setup for the non-canonical worktree containing `cwd`. |
-| `wktree config explain --cwd <path> [--json]` (planned) | Show the effective policy after defaults, matching rules, and exact project overrides. |
+| `wktree config explain --cwd <path> [--json]` | Show the effective policy after defaults, matching rules, and exact project overrides. |
 | `wktree finish --cwd <path> [--json] [--strategy <strategy>] [--push] [--remove-worktree] [--delete-branch]` (planned) | Integrate a completed worktree into the canonical root using configured policy. |
 
 ### Structured output rules
@@ -391,13 +391,13 @@ Implemented exact project fields:
 | Field | Required | Purpose |
 |---|---|---|
 | `root` | yes | Canonical root worktree path. |
-| `command` | currently yes; planned optional | Bootstrap command run as the post-create script. If absent in the planned policy model, no bootstrap script is emitted. |
+| `command` | when using pools, copy, or bootstrap setup | Bootstrap command run as the post-create script. Policy-only exact projects may omit it; absent commands emit no bootstrap script. |
 | `name` | no | Project identifier; defaults to the basename of `root`. |
 | `pool_size` | no | Enables pooled mode with this many fixed slots. |
 | `copy_mode_default` | no | `copy` or `symlink`; defaults to `copy` and applies to all copy entries unless overridden. |
 | `copy` | no | Files or directories to copy or symlink into created worktrees before `command` runs. |
 
-Planned policy fields:
+Policy fields:
 
 | Field | Scope | Purpose |
 |---|---|---|

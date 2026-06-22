@@ -37,7 +37,7 @@ tasks:
   - id: 8
     description: Apply add policy to pools and wrapper
     task_file: tasks/008-apply-add-policy-to-pools-and-wrapper.md
-    status: pending
+    status: complete
     blocked_by: [7]
   - id: 9
     description: Add finish ff-only flow

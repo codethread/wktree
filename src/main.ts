@@ -69,6 +69,7 @@ import type {
 	ReadyAddPayload,
 	ReadyRemovePayload,
 	RemovePlan,
+	TreesConfig,
 	SessionInfo,
 	Slot,
 	Worktree,
@@ -236,6 +237,7 @@ async function addCommand(args: string[], deps: Deps) {
 			return addPooledWorktree({
 				deps: machineDeps,
 				project,
+				config,
 				root: canonicalRoot,
 				branch,
 				slotPath,
@@ -252,20 +254,13 @@ async function addCommand(args: string[], deps: Deps) {
 
 		await machineDeps.git.run(["-C", canonicalRoot, "fetch", "origin"]);
 		const branchState = await detectBranchState(machineDeps.git, canonicalRoot, branch);
-		let defaultBase: string | null = null;
-		if (branchState === "none") {
-			if (base) {
-				defaultBase = base;
-			} else {
-				const defaultBranch = await detectOriginDefaultBranch(machineDeps.git, canonicalRoot);
-				if (explainPolicy(config, canonicalRoot).addPolicy === "fresh_canonical") {
-					await fastForwardCanonicalDefault(machineDeps.git, canonicalRoot, defaultBranch);
-					defaultBase = defaultBranch;
-				} else {
-					defaultBase = `origin/${defaultBranch}`;
-				}
-			}
-		}
+		const defaultBase = await resolveDefaultBaseForNewBranch({
+			git: machineDeps.git,
+			root: canonicalRoot,
+			config,
+			branchState,
+			base,
+		});
 		const originalBranchHead = await captureExistingBranchHead({
 			git: machineDeps.git,
 			root: canonicalRoot,
@@ -331,6 +326,7 @@ async function addCommand(args: string[], deps: Deps) {
 async function addPooledWorktree(options: {
 	deps: Deps;
 	project: ProjectConfig;
+	config: TreesConfig;
 	root: string;
 	branch: string;
 	slotPath: string | null;
@@ -338,12 +334,28 @@ async function addPooledWorktree(options: {
 	base: string | null;
 	force: boolean;
 }): Promise<CommandResult> {
-	const {deps, project, root, branch, slotPath, output, base, force} = options;
+	const {deps, project, config, root, branch, slotPath, output, base, force} = options;
 	let worktrees = await listWorktrees(deps.git, root);
 	for (const worktree of worktrees) {
 		if (worktree.branch === branch) {
 			throw new DuplicateBranchError(`branch ${branch} is already checked out at ${worktree.path}`);
 		}
+	}
+	await deps.git.run(["-C", root, "fetch", "origin"]);
+	const branchState = await detectBranchState(deps.git, root, branch);
+	let defaultBase: string | null;
+	try {
+		defaultBase = await resolveDefaultBaseForNewBranch({
+			git: deps.git,
+			root,
+			config,
+			branchState,
+			base,
+		});
+	} catch (error) {
+		const blocked = toBlockedCommandResult(error, output, {branch, slot_path: slotPath ?? undefined});
+		if (blocked) return blocked;
+		throw error;
 	}
 	await ensurePool(project, deps, worktrees);
 	worktrees = await listWorktrees(deps.git, root);
@@ -352,7 +364,6 @@ async function addPooledWorktree(options: {
 			throw new DuplicateBranchError(`branch ${branch} is already checked out at ${worktree.path}`);
 		}
 	}
-	await deps.git.run(["-C", root, "fetch", "origin"]);
 	let state = await buildPoolState(project, worktrees, deps.git);
 
 	if (slotPath) {
@@ -368,7 +379,7 @@ async function addPooledWorktree(options: {
 			targetSlot = state.slots.find((candidate) => candidate.index === selected.index) ?? targetSlot;
 		}
 		return finalizeStructuredResult(
-			await allocatePooledSlot({deps, project, root, slot: targetSlot, branch, base}),
+			await allocatePooledSlot({deps, project, root, slot: targetSlot, branch, branchState, base: base ?? defaultBase}),
 			output,
 		);
 	}
@@ -378,7 +389,7 @@ async function addPooledWorktree(options: {
 	);
 	if (slot) {
 		return finalizeStructuredResult(
-			await allocatePooledSlot({deps, project, root, slot, branch, base}),
+			await allocatePooledSlot({deps, project, root, slot, branch, branchState, base: base ?? defaultBase}),
 			output,
 		);
 	}
@@ -401,7 +412,7 @@ async function addPooledWorktree(options: {
 	const recycled = state.slots.find((candidate) => candidate.index === selected.index);
 	if (!recycled) throw new WktreeError(`pool slot disappeared after recycle: ${selected.path}`);
 	return finalizeStructuredResult(
-		await allocatePooledSlot({deps, project, root, slot: recycled, branch, base}),
+		await allocatePooledSlot({deps, project, root, slot: recycled, branch, branchState, base: base ?? defaultBase}),
 		output,
 	);
 }
@@ -412,19 +423,17 @@ async function allocatePooledSlot(options: {
 	root: string;
 	slot: Slot;
 	branch: string;
+	branchState: BranchState;
 	base: string | null;
 }): Promise<ReadyAddPayload> {
-	const {deps, project, root, slot, branch, base} = options;
-	const branchState = await detectBranchState(deps.git, root, branch);
+	const {deps, project, root, slot, branch, branchState, base} = options;
 	const originalBranchHead = await captureExistingBranchHead({git: deps.git, root, branch, branchState});
-	const defaultBase =
-		branchState === "none" && !base ? await detectOriginDefaultBranch(deps.git, root) : null;
 	await checkoutBranchInSlot({
 		git: deps.git,
 		slotPath: slot.path,
 		branch,
 		state: branchState,
-		base: base ?? defaultBase,
+		base,
 		progress: deps.progress,
 	});
 	try {
@@ -1012,6 +1021,26 @@ async function detectOriginDefaultBranch(git: GitRunner, root: string): Promise<
 	const fromRemoteShow = remoteShow.exitCode === 0 ? parseTrunkFromRemoteShow(remoteShow.stdout) : null;
 	if (fromRemoteShow) return fromRemoteShow;
 	throw new TrunkDetectionError("couldn't determine origin default branch");
+}
+
+async function resolveDefaultBaseForNewBranch(options: {
+	git: GitRunner;
+	root: string;
+	config: TreesConfig;
+	branchState: BranchState;
+	base: string | null;
+}): Promise<string | null> {
+	const {git, root, config, branchState, base} = options;
+	if (branchState !== "none") return null;
+	const policy = explainPolicy(config, root).addPolicy;
+	if (policy === "fresh_canonical") {
+		const defaultBranch = await detectOriginDefaultBranch(git, root);
+		await fastForwardCanonicalDefault(git, root, defaultBranch);
+		return base ?? defaultBranch;
+	}
+	if (base) return base;
+	const defaultBranch = await detectOriginDefaultBranch(git, root);
+	return `origin/${defaultBranch}`;
 }
 
 async function fastForwardCanonicalDefault(
