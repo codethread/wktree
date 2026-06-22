@@ -75,21 +75,24 @@ Import `nu/wktree/mod.nu` to get the human-facing commands:
 - `wk list [--json]`
 - `wk switch`
 
-The wrapper runs any returned post-create script and then opens or switches to the emitted tmux session/path.
+`wk add` delegates freshness policy to the TypeScript engine, runs any returned post-create script, and then opens or switches to the emitted tmux session/path. The wrapper does not expose a `finish` shortcut; use `wktree finish` directly when integrating a completed worktree.
 
 ## Project configuration
 
-Project config is read from `ct-worktrees/trees.toml` under XDG config home. Projects can define `name`, `root`, optional `command`, optional `pool_size`, optional `copy` entries, and policy overrides. `command` is required when a project uses pools or copy/bootstrap setup, but policy-only exact projects may omit it. Effective policy can be inspected with `wktree config explain --cwd <path> [--json]`.
+Project config is read from `ct-worktrees/trees.toml` under XDG config home. Projects can define `name`, `root`, optional `command`, optional `pool_size`, optional `copy` entries, and policy overrides. `command` is required when a project uses pools or copy/bootstrap setup, but policy-only exact projects may omit it. Use `wktree config explain --cwd <path> [--json]` to inspect the effective policy.
 
-Example:
+Policy resolution starts with built-in defaults, applies matching `[[rule]]` entries in file order, then applies exact `[[project]]` overrides. Finish policy fields merge field-by-field.
 
 ```toml
 [defaults.add]
 policy = "origin_default"
 
 [defaults.finish]
-strategy = "ff_only" # ff_only, rebase_ff, squash, or merge_commit
+enabled = true
+strategy = "ff_only"
 push = false
+remove_worktree = false
+delete_branch = false
 
 [[rule]]
 root_glob = "~/dev/projects/**"
@@ -97,23 +100,34 @@ root_glob = "~/dev/projects/**"
 [rule.add]
 policy = "fresh_canonical"
 
+[rule.finish]
+strategy = "squash"
+push = true
+
 [[project]]
 name = "example"
 root = "~/dev/example"
 command = "bun install"
 pool_size = 3
-copy_mode_default = "copy"
-copy = [
-  ".env",
-  { from = "~/my/repo/skill-dir", to = [".claude/skills/skill-dir", ".pi/agents/skill-dir"] },
-  { from = ".env.shared", to = ".env.shared", mode = "symlink" },
-]
+copy = [".env"]
+
+[project.add]
+policy = "origin_default"
 
 [project.finish]
+strategy = "merge_commit"
 remove_worktree = true
+delete_branch = true
 ```
 
-Policy resolution starts with built-in defaults, applies matching `[[rule]]` entries in file order, then applies exact `[[project]]` overrides. Finish policy fields merge field-by-field.
+Valid finish strategies are `ff_only`, `rebase_ff`, `squash`, and `merge_commit`.
+
+Add policy values are:
+
+- `origin_default`: fetch `origin` and start new branches from `origin/<default>` without changing the canonical root.
+- `fresh_canonical`: fetch `origin`, require the canonical root to be clean and checked out on the default branch, fast-forward it, then start new branches from that fresh local default branch. If the root is dirty, on the wrong branch, or cannot fast-forward, `add` fails hard rather than falling back to stale canonical state.
+
+`finish` integrates the current non-canonical worktree into the canonical default branch. It requires a clean source worktree, fetches first, requires a clean/fresh canonical target, and stops on conflicts. `--strategy` overrides config. `--push` does a normal non-forced push; rejection blocks cleanup. `--remove-worktree` removes a regular worktree or recycles a pooled slot after successful integration and push. `--delete-branch` requires removing/recycling the worktree in the same finish run.
 
 String `copy` entries copy root-relative files to the same relative path in the created worktree by default. Object entries use `from` and `to`; `from` may be root-relative, absolute, or start with `~`, and `to` may be a destination string or array of destination strings. Destination paths are always relative to the created worktree. `copy_mode_default` may be `"copy"` or `"symlink"` and applies to all entries unless an object entry sets `mode`. Symlink mode creates destination symlinks to the resolved source target. Copy setup runs before the configured `command`, and can be rerun for an existing non-root worktree with `wktree copy --cwd <path> [--json]` or `wk copy [--json]`.
 

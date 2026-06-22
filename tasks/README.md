@@ -124,3 +124,8 @@ Append notes here. Do not rewrite earlier notes.
 - Push uses a normal `git push origin <target_branch>` and maps any rejection/failure to `reason: "push_rejected"`; cleanup is skipped when push fails.
 - Finish cleanup intentionally uses a separate integrated-branch safety path from standalone `remove`/`recycle`: the source must still be clean, but local-only and squash-finished branches can be removed/recycled after successful integration.
 - Branch deletion currently requires worktree cleanup in the same finish invocation because Git refuses deleting a branch still checked out in a linked worktree; attempting deletion alone returns a structured unsafe blocked payload before integration.
+
+### Task 12 implementation notes — 2026-06-22
+
+- User-facing README now covers add policy resolution, `fresh_canonical` failure behavior, `origin_default`, finish strategies, push, cleanup, and wrapper ownership boundaries.
+- The root worktree spec status is back to `Implemented`; the spec index now describes finish as implemented rather than planned.

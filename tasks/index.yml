@@ -57,5 +57,5 @@ tasks:
   - id: 12
     description: Document policy and finish
     task_file: tasks/012-document-policy-and-finish.md
-    status: pending
+    status: complete
     blocked_by: [8, 11]

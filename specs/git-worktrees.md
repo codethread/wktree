@@ -1,6 +1,6 @@
 # Git Worktrees Engine
 
-**Status:** Partial — current lifecycle, copy setup, policy-driven add freshness, and `finish` local integration, push, and cleanup are implemented; final user-facing finish documentation remains in progress
+**Status:** Implemented
 **Last Updated:** 2026-06-22
 
 ## 1. Overview
@@ -226,12 +226,12 @@ local ref. Existing local or remote branches are checked out according to normal
 rules; if policy later governs remote fast-forward of existing branch worktrees, failures must
 be structured as either blocked or warning outcomes rather than stderr-only text.
 
-### Finish lifecycle (planned)
+### Finish lifecycle
 
 `finish` integrates a completed non-canonical worktree into the canonical root using configured
 policy. It is intentionally conservative:
 
-- refuse to run from the canonical root unless an explicit escape is provided;
+- refuse to run from the canonical root;
 - require the source worktree to be clean;
 - fetch before integration;
 - require the target/canonical checkout to be clean and up to date according to the active add
@@ -254,8 +254,9 @@ Supported strategies mirror common forge merge choices while preserving local de
 the worktree after successful integration. Push rejection is a blocking result, not a reason to
 retry with force. Cleanup uses finish-aware safety: once a configured strategy has successfully
 integrated the source changes into the target, the source branch/worktree may be cleaned up even
-when the source branch is local-only or was squash-finished. Standalone `remove`/`recycle` keep
-their upstream-merge safety rules.
+when the source branch is local-only or was squash-finished. Branch deletion requires removing or
+recycling the source worktree in the same `finish` invocation; otherwise finish blocks before
+integration. Standalone `remove`/`recycle` keep their upstream-merge safety rules.
 
 ## 4. Interfaces
 
@@ -323,12 +324,11 @@ recycles the slot in place and reports `kind: "ready"` with `removed: false`:
 ```
 
 Blocked/recoverable failures (when `--json`) emit a `blocked` payload. `reason` is an
-enumerated machine token — currently `duplicate_branch`, `dirty_slot`, `unmerged_branch`,
-`canonical_root`, `unsafe`, or `blocked` — and `message` is human-readable. Planned
-policy operations extend the reason set with stable tokens such as `dirty_canonical`,
-`wrong_canonical_branch`, `non_ff_canonical`, `dirty_worktree`, `target_not_fresh`,
-`push_rejected`, and `conflict`. Optional `branch`, `worktree_path`, and `slot_path` are
-included when known:
+enumerated machine token such as `duplicate_branch`, `dirty_slot`, `unmerged_branch`,
+`canonical_root`, `unsafe`, `dirty_canonical`, `wrong_canonical_branch`,
+`non_ff_canonical`, `dirty_worktree`, `target_not_fresh`, `push_rejected`, `conflict`,
+or `blocked`, and `message` is human-readable. Optional `branch`, `worktree_path`, and
+`slot_path` are included when known:
 
 ```json
 {
@@ -379,12 +379,53 @@ are unsafe refusals with exit code `11`; with `--json`, they emit a blocked payl
 
 With no copy configuration, `copied` and `exclude_paths` are empty arrays.
 
+`config explain --json` emits the effective policy and the config layers that matched the
+canonical root:
+
+```json
+{
+  "kind": "config_explain",
+  "root": "/repo",
+  "matched_rules": [{"root_glob": "~/dev/projects/**"}],
+  "project": {"name": "example", "root": "/repo"},
+  "add": {"policy": "fresh_canonical"},
+  "finish": {
+    "enabled": true,
+    "strategy": "ff_only",
+    "push": false,
+    "remove_worktree": false,
+    "delete_branch": false
+  }
+}
+```
+
+With no exact project match, `project` is `null`. With no matching root-glob rules,
+`matched_rules` is empty.
+
+Successful `finish --json` emits the integrated source, target, strategy, and ordered cleanup
+actions that actually ran:
+
+```json
+{
+  "kind": "ready",
+  "root": "/repo",
+  "worktree_path": "/repo__feature--foo",
+  "source_branch": "feature/foo",
+  "target_branch": "main",
+  "strategy": "ff_only",
+  "cleanup_actions": ["push", "remove_worktree", "delete_branch"]
+}
+```
+
+Pooled cleanup reports `"recycle_worktree"` instead of `"remove_worktree"`. If push or cleanup
+is not enabled, the corresponding action is absent.
+
 ### Config
 
-Config is read from `ct-worktrees/trees.toml` under XDG config home. Implemented project
-entries define exact canonical roots for bootstrap, pools, and copy setup. Planned policy
-configuration adds defaults and root-glob rules that can affect repositories without requiring
-bootstrap setup.
+Config is read from `ct-worktrees/trees.toml` under XDG config home. Project entries define
+exact canonical roots for bootstrap, pools, copy setup, and exact policy overrides. Policy
+configuration also supports defaults and root-glob rules that can affect repositories without
+requiring bootstrap setup.
 
 Implemented exact project fields:
 
