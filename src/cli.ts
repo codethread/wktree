@@ -106,6 +106,16 @@ export async function main(argv: string[] = Bun.argv, deps: Deps = createLiveDep
 		});
 
 	program
+		.command("finish")
+		.description("Integrate a completed worktree into the canonical root")
+		.requiredOption("--cwd <path>", "Path within source worktree")
+		.option("--json", "Machine-readable output")
+		.option("--strategy <strategy>", "Integration strategy")
+		.action(async (opts) => {
+			await runAction("finish", optsToArgs(opts), deps);
+		});
+
+	program
 		.command("config")
 		.description("Inspect effective configuration")
 		.command("explain")

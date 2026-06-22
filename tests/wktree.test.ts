@@ -867,6 +867,161 @@ integrationDescribe("wktree non-pool add", () => {
 	});
 });
 
+integrationDescribe("wktree finish", () => {
+	let tmp: string;
+	let originalConfigHome: string | undefined;
+
+	beforeEach(() => {
+		tmp = mkdtempSync(join(tmpdir(), "wktree-finish-test-"));
+		originalConfigHome = process.env.XDG_CONFIG_HOME;
+	});
+
+	afterEach(() => {
+		if (originalConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+		else process.env.XDG_CONFIG_HOME = originalConfigHome;
+		rmSync(tmp, {recursive: true, force: true});
+	});
+
+	test("finish disabled blocks before integration with JSON payload", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, "[project.finish]\nenabled = false\n");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/disabled-finish", "--json"], deps);
+		const worktreePath = `${root}__feature--disabled-finish`;
+		await commitFile({
+			repo: worktreePath,
+			path: "disabled.txt",
+			content: "disabled\n",
+			message: "disabled work",
+		});
+		const originalHead = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim();
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			kind: "blocked",
+			reason: "blocked",
+			message: expect.stringContaining("finish is disabled"),
+		});
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(originalHead);
+	});
+
+	test("refuses finish from canonical root", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+
+		const result = await dispatch("finish", ["--cwd", root, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.UNSAFE);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "canonical_root"});
+	});
+
+	test("refuses dirty source worktree", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/dirty-finish", "--json"], deps);
+		const worktreePath = `${root}__feature--dirty-finish`;
+		writeFileSync(join(worktreePath, "dirty.txt"), "dirty\n");
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "dirty_worktree"});
+	});
+
+	test("enforces target freshness before integration", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/stale-target", "--json"], deps);
+		const worktreePath = `${root}__feature--stale-target`;
+		await commitFile({repo: worktreePath, path: "source.txt", content: "source\n", message: "source work"});
+		await commitOnRemoteDefault({
+			remote,
+			path: "remote-fresh.txt",
+			content: "fresh\n",
+			message: "fresh remote",
+		});
+		const originalHead = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim();
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "target_not_fresh"});
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(originalHead);
+	});
+
+	test("ff_only moves the canonical default branch to the source branch", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/finish", "--json"], deps);
+		const worktreePath = `${root}__feature--finish`;
+		await commitFile({
+			repo: worktreePath,
+			path: "finished.txt",
+			content: "finished\n",
+			message: "finished work",
+		});
+		const sourceHead = (await run(["git", "-C", worktreePath, "rev-parse", "HEAD"])).stdout.trim();
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json", "--strategy", "ff_only"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			kind: "ready",
+			root,
+			worktree_path: worktreePath,
+			source_branch: "feature/finish",
+			target_branch: "main",
+			strategy: "ff_only",
+		});
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(sourceHead);
+		expect(readFileSync(join(root, "finished.txt"), "utf8")).toBe("finished\n");
+	});
+
+	test("fresh_canonical conflict refuses without first fast-forwarding target", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, '[project.add]\npolicy = "fresh_canonical"\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/fresh-conflict", "--json"], deps);
+		const worktreePath = `${root}__feature--fresh-conflict`;
+		await commitFile({repo: worktreePath, path: "source.txt", content: "source\n", message: "source work"});
+		await commitOnRemoteDefault({
+			remote,
+			path: "remote-fresh.txt",
+			content: "fresh\n",
+			message: "fresh remote",
+		});
+		const originalHead = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim();
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "conflict"});
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(originalHead);
+		expect((await runRaw(["git", "-C", root, "show", "HEAD:remote-fresh.txt"])).exitCode).not.toBe(0);
+	});
+
+	test("non-fast-forward ff_only refuses without target modification", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/divergent-finish", "--json"], deps);
+		const worktreePath = `${root}__feature--divergent-finish`;
+		await commitFile({
+			repo: worktreePath,
+			path: "source-only.txt",
+			content: "source\n",
+			message: "source work",
+		});
+		await commitFile({repo: root, path: "target-only.txt", content: "target\n", message: "target work"});
+		const targetHead = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim();
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "conflict"});
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(targetHead);
+	});
+});
+
 integrationDescribe("wktree copy", () => {
 	let tmp: string;
 	let originalConfigHome: string | undefined;
@@ -2500,6 +2655,12 @@ async function createRemoteBranch(remote: string, branch: string) {
 	} finally {
 		rmSync(clone, {recursive: true, force: true});
 	}
+}
+
+async function commitFile(change: {repo: string; path: string; content: string; message: string}) {
+	writeFileSync(join(change.repo, change.path), change.content);
+	await run(["git", "-C", change.repo, "add", change.path]);
+	await run(["git", "-C", change.repo, "commit", "-m", change.message]);
 }
 
 async function commitOnRemoteDefault(change: {

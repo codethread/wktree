@@ -105,3 +105,9 @@ Append notes here. Do not rewrite earlier notes.
 - Pooled `add` now resolves add freshness before pool initialization/recycle/allocation, so `fresh_canonical` failures stop before an occupied slot can be recycled.
 - Pooled new branches share the non-pooled base selection: `fresh_canonical` fast-forwards canonical root and starts from the default branch; `origin_default` starts from `origin/<default>` without mutating canonical root.
 - The Nushell wrapper no longer owns `--latest`/`git pull --ff-only`; freshness behavior is engine/config driven for both human and agent entry points.
+
+### Task 9 implementation notes — 2026-06-22
+
+- Added `finish --cwd <path> [--json] [--strategy ff_only]` as a local-only fast-forward integration from a clean non-canonical source worktree into the canonical default branch.
+- Finish now fetches `origin`, blocks disabled policy before integration, refuses canonical-root and dirty-source invocations, and emits structured blocked reasons for `dirty_worktree`, `target_not_fresh`, and `conflict`.
+- For `fresh_canonical`, finish reuses canonical freshness checks and fast-forwards the canonical root before integration; for `origin_default`, the target root must already be clean, on the default branch, and not behind `origin/<default>`.

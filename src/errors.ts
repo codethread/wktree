@@ -45,8 +45,11 @@ export class DuplicateBranchError extends BlockedError {}
 export class DirtySlotError extends UnsafeOperationError {}
 export class UnmergedBranchError extends UnsafeOperationError {}
 export class DirtyCanonicalError extends BlockedError {}
+export class DirtyWorktreeError extends BlockedError {}
 export class WrongCanonicalBranchError extends BlockedError {}
 export class NonFastForwardCanonicalError extends BlockedError {}
+export class TargetNotFreshError extends BlockedError {}
+export class FinishConflictError extends BlockedError {}
 export class ReservedPrefixError extends UsageError {}
 export class CanonicalRootError extends UnsafeOperationError {}
 export class HookError extends WktreeError {

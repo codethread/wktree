@@ -34,10 +34,13 @@ import {
 	ConfigError,
 	DirtyCanonicalError,
 	DirtySlotError,
+	DirtyWorktreeError,
 	DuplicateBranchError,
+	FinishConflictError,
 	EXIT_CODES,
 	NonFastForwardCanonicalError,
 	PickerCancelled,
+	TargetNotFreshError,
 	ReservedPrefixError,
 	TrunkDetectionError,
 	UnmergedBranchError,
@@ -55,6 +58,7 @@ import {
 } from "./git/worktrees.ts";
 import type {
 	AddPlan,
+	AddPolicy,
 	BlockedPayload,
 	CopiedFile,
 	CopyEntry,
@@ -82,11 +86,14 @@ export {
 	CanonicalRootError,
 	ConfigError,
 	DirtySlotError,
+	DirtyWorktreeError,
 	DuplicateBranchError,
 	EXIT_CODES,
+	FinishConflictError,
 	HookError,
 	PickerCancelled,
 	ReservedPrefixError,
+	TargetNotFreshError,
 	TrunkDetectionError,
 	UnmergedBranchError,
 	UnsafeOperationError,
@@ -127,6 +134,7 @@ Subcommands:
   recycle   Recycle a pooled slot
   copy      Re-run configured copy setup
   config    Inspect effective configuration
+  finish    Integrate a completed worktree into the canonical root
 
 Options:
   -h, --help  Show this help message
@@ -172,6 +180,8 @@ export async function dispatch(
 			return copyCommand(args, deps);
 		case "config":
 			return configCommand(args, deps);
+		case "finish":
+			return finishCommand(args, deps);
 		default:
 			return {stderr: USAGE, exitCode: EXIT_CODES.USAGE};
 	}
@@ -737,6 +747,81 @@ async function copyCommand(args: string[], deps: Deps) {
 	}
 }
 
+async function finishCommand(args: string[], deps: Deps) {
+	const opts = parseOptions(args);
+	const cwd = requireOption(opts, "cwd");
+	const output = parseOutputMode(opts);
+	const requestedStrategy = typeof opts.strategy === "string" ? opts.strategy : null;
+	const machineDeps = withMachineJsonProgress(deps, output);
+	let sourceBranch: string | undefined;
+	let worktreePath: string | undefined;
+
+	try {
+		const config = readConfig();
+		const worktrees = await listWorktrees(machineDeps.git, cwd);
+		const canonical = worktrees.find((worktree) => worktree.canonical);
+		if (!canonical) throw new WktreeError("couldn't determine canonical worktree");
+		const source = resolveWorktreeContainingPath(worktrees, cwd);
+		if (!source) throw new UsageError(`no worktree contains cwd: ${cwd}`);
+		worktreePath = source.path;
+		if (normalizeExistingPath(source.path) === normalizeExistingPath(canonical.path)) {
+			throw new CanonicalRootError("refusing to finish from canonical root");
+		}
+		if (!source.branch) throw new UsageError("finish requires a source worktree checked out on a branch");
+		sourceBranch = source.branch;
+
+		const explanation = explainPolicy(config, canonical.path);
+		const finishPolicy = explanation.finishPolicy;
+		if (!finishPolicy.enabled) throw new BlockedError("finish is disabled for this repository");
+		const strategy = requestedStrategy ?? finishPolicy.strategy;
+		if (strategy !== "ff_only") throw new UsageError("only --strategy ff_only is supported");
+
+		const sourceStatus = await machineDeps.git.run(["-C", source.path, "status", "--porcelain=v1"]);
+		if (sourceStatus.stdout.trim() !== "") throw new DirtyWorktreeError("source worktree has uncommitted changes");
+
+		await machineDeps.git.run(["-C", canonical.path, "fetch", "origin"]);
+		const targetBranch = await detectOriginDefaultBranch(machineDeps.git, canonical.path);
+		const policy = explainPolicy(config, canonical.path).addPolicy;
+		const targetRef = await assertFinishTargetReady({
+			git: machineDeps.git,
+			root: canonical.path,
+			policy,
+			targetBranch,
+		});
+
+		const canFastForward = await machineDeps.git.runRaw([
+			"-C",
+			canonical.path,
+			"merge-base",
+			"--is-ancestor",
+			targetRef,
+			`refs/heads/${source.branch}`,
+		]);
+		if (canFastForward.exitCode !== 0) throw new FinishConflictError("source branch cannot fast-forward target branch");
+		if (policy === "fresh_canonical") await fastForwardCanonicalDefault(machineDeps.git, canonical.path, targetBranch);
+		await machineDeps.git.run(["-C", canonical.path, "merge", "--ff-only", source.branch]);
+
+		return finalizeStructuredResult(
+			{
+				kind: "ready",
+				root: canonical.path,
+				worktree_path: source.path,
+				source_branch: source.branch,
+				target_branch: targetBranch,
+				strategy,
+			},
+			output,
+		);
+	} catch (error) {
+		const blocked = toBlockedCommandResult(error, output, {
+			branch: sourceBranch,
+			worktree_path: worktreePath,
+		});
+		if (blocked) return blocked;
+		throw error;
+	}
+}
+
 async function configCommand(args: string[], deps: Deps) {
 	const [topic, ...rest] = args;
 	if (topic !== "explain") throw new UsageError("expected config explain");
@@ -1043,11 +1128,31 @@ async function resolveDefaultBaseForNewBranch(options: {
 	return `origin/${defaultBranch}`;
 }
 
-async function fastForwardCanonicalDefault(
-	git: GitRunner,
-	root: string,
-	defaultBranch: string,
-): Promise<void> {
+async function assertFinishTargetReady(options: {
+	git: GitRunner;
+	root: string;
+	policy: AddPolicy;
+	targetBranch: string;
+}): Promise<string> {
+	const {git, root, policy, targetBranch} = options;
+	if (policy === "fresh_canonical") {
+		await assertCanonicalCanFastForward(git, root, targetBranch);
+		return `origin/${targetBranch}`;
+	}
+	const status = await git.run(["-C", root, "status", "--porcelain=v1"]);
+	if (status.stdout.trim() !== "") throw new TargetNotFreshError("target worktree has uncommitted changes");
+	const current = (await git.run(["-C", root, "branch", "--show-current"])).stdout.trim();
+	if (current !== targetBranch) {
+		throw new TargetNotFreshError(
+			`target branch must be checked out on ${targetBranch}; currently on ${current || "detached HEAD"}`,
+		);
+	}
+	const targetIsCurrent = await git.runRaw(["-C", root, "merge-base", "--is-ancestor", `origin/${targetBranch}`, "HEAD"]);
+	if (targetIsCurrent.exitCode !== 0) throw new TargetNotFreshError(`target branch is behind origin/${targetBranch}`);
+	return `refs/heads/${targetBranch}`;
+}
+
+async function assertCanonicalCanFastForward(git: GitRunner, root: string, defaultBranch: string): Promise<void> {
 	const status = await git.run(["-C", root, "status", "--porcelain=v1"]);
 	if (status.stdout.trim() !== "") {
 		throw new DirtyCanonicalError("canonical root has uncommitted changes");
@@ -1064,6 +1169,14 @@ async function fastForwardCanonicalDefault(
 			`canonical root cannot fast-forward to origin/${defaultBranch}`,
 		);
 	}
+}
+
+async function fastForwardCanonicalDefault(
+	git: GitRunner,
+	root: string,
+	defaultBranch: string,
+): Promise<void> {
+	await assertCanonicalCanFastForward(git, root, defaultBranch);
 	await git.run(["-C", root, "merge", "--ff-only", `origin/${defaultBranch}`]);
 }
 
@@ -1204,9 +1317,12 @@ function toBlockedPayload(
 	let reason = "blocked";
 	if (error instanceof DuplicateBranchError) reason = "duplicate_branch";
 	else if (error instanceof DirtySlotError) reason = "dirty_slot";
+	else if (error instanceof DirtyWorktreeError) reason = "dirty_worktree";
 	else if (error instanceof DirtyCanonicalError) reason = "dirty_canonical";
 	else if (error instanceof WrongCanonicalBranchError) reason = "wrong_canonical_branch";
 	else if (error instanceof NonFastForwardCanonicalError) reason = "non_ff_canonical";
+	else if (error instanceof TargetNotFreshError) reason = "target_not_fresh";
+	else if (error instanceof FinishConflictError) reason = "conflict";
 	else if (error instanceof UnmergedBranchError) reason = "unmerged_branch";
 	else if (error instanceof CanonicalRootError) reason = "canonical_root";
 	else if (error.exitCode === EXIT_CODES.UNSAFE) reason = "unsafe";

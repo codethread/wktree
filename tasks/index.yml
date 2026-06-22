@@ -42,7 +42,7 @@ tasks:
   - id: 9
     description: Add finish ff-only flow
     task_file: tasks/009-add-finish-ff-only.md
-    status: pending
+    status: complete
     blocked_by: [6]
   - id: 10
     description: Add finish merge strategies
