@@ -1,7 +1,7 @@
 # Git Worktrees Engine
 
-**Status:** Implemented  
-**Last Updated:** 2026-06-18
+**Status:** Partial — current lifecycle is implemented; policy-driven add freshness and `finish` are planned
+**Last Updated:** 2026-06-22
 
 ## 1. Overview
 
@@ -20,6 +20,7 @@ config, and optional per-repository pool slots; tmux is a consumer, not a databa
 - Reconstruct current state from authoritative sources rather than a synchronized cache.
 - Support opt-in fixed pools for high-cost repositories.
 - Support deterministic per-worktree copy setup for untracked local configuration and tool assets.
+- Allow explicit repository policy for how new work starts and how completed work is integrated.
 - Surface destructive or ambiguous states with structured data.
 
 ### Non-Goals
@@ -28,7 +29,10 @@ config, and optional per-repository pool slots; tmux is a consumer, not a databa
 - No tmux resurrection or persistent session registry.
 - No requirement that each worktree has a live tmux session.
 - No implicit pool expansion.
-- No repo-specific bootstrap policy beyond deterministic copy setup and executing configured project commands.
+- No periodic repository sync daemon, background auto-pull, or auto-push loop.
+- No automatic commits for normal source repositories.
+- No automatic merge-conflict resolution or force-pushing.
+- No pull-request/provider workflow management.
 - No glob, environment-variable, or shell expansion in copy configuration beyond leading `~`.
 
 ## 2. Design Decisions
@@ -69,6 +73,23 @@ config, and optional per-repository pool slots; tmux is a consumer, not a databa
 - **Decision:** Fresh parsing over synchronized caches.
   - **Rationale:** Git worktree metadata, filesystem paths, project config, and live tmux
     state are cheap enough to inspect directly, removing cache-invalidation bugs.
+- **Decision:** Add-time freshness policy belongs in the engine, not only in shell wrappers.
+  - **Rationale:** Humans and agents should get the same safety guarantees. If a repository
+    requires new work to start from an up-to-date canonical default branch, that invariant
+    must hold for direct `wktree add --json` consumers as well as the Nushell wrapper.
+- **Decision:** Strict add policy fails instead of falling back to stale bases.
+  - **Rationale:** Falling back to an old canonical checkout hides the real problem and
+    can cause humans or agents to build, test, or diff against a misleading root worktree.
+    Repositories that cannot support strict worktree development must opt into a looser policy.
+- **Decision:** Root-glob rules are policy selectors, not a general inheritance language.
+  - **Rationale:** Personal defaults such as `~/dev/projects/**` are useful, but policy
+    resolution should remain explainable: defaults are refined by ordered matching rules and
+    exact project entries, with no conditionals or broad shell expansion.
+- **Decision:** `finish` is a conservative worktree lifecycle operation, not a general Git
+  automation daemon.
+  - **Rationale:** Integrating a completed branch into the canonical root is the natural
+    counterpart to `add`, but conflict resolution, force-pushing, scheduled sync, and provider
+    workflows remain explicit human responsibilities.
 
 ## 3. Domain Concepts
 
@@ -175,6 +196,67 @@ preserves content outside it:
 When no copy destinations are configured, the fenced block is removed on the next copy-capable
 run.
 
+### Policy configuration (planned)
+
+Policy configuration describes default behavior for repositories that may not need bootstrap
+commands or pools. It is resolved from three layers:
+
+1. built-in defaults;
+2. matching `[[rule]]` entries, evaluated in file order with later matching fields winning;
+3. an exact `[[project]]` entry for the canonical root, whose fields win over rules.
+
+Rules match canonical root paths with an explicit `root_glob`. Glob matching is only for root
+selection; copy paths keep their stricter no-glob contract. Exact project entries remain the
+place for bootstrap commands, pools, and copy setup, but they may also exist only to override
+policy for an exceptional repository.
+
+### Add freshness policy (planned)
+
+`add` policy controls how a new branch chooses its starting point and whether the canonical
+root must be up to date first:
+
+| Policy | Contract |
+|---|---|
+| `fresh_canonical` | Fetch `origin`, require the canonical root to be clean and checked out on origin's default branch, fast-forward it to `origin/<default>`, then create new branches from the canonical default branch. Any failure blocks `add`. |
+| `origin_default` | Fetch `origin` and create new branches from `origin/<default>` without mutating the canonical root. This is the escape hatch for repositories that cannot reliably keep the canonical checkout clean or worktree-only. |
+
+An explicit `--base` remains a user override, but freshness still applies to the selected base
+where meaningful: strict policies must fetch first and must not silently fall back to a stale
+local ref. Existing local or remote branches are checked out according to normal branch-state
+rules; if policy later governs remote fast-forward of existing branch worktrees, failures must
+be structured as either blocked or warning outcomes rather than stderr-only text.
+
+### Finish lifecycle (planned)
+
+`finish` integrates a completed non-canonical worktree into the canonical root using configured
+policy. It is intentionally conservative:
+
+- refuse to run from the canonical root unless an explicit escape is provided;
+- require the source worktree to be clean;
+- fetch before integration;
+- require the target/canonical checkout to be clean and up to date according to the active add
+  freshness policy;
+- never force-push;
+- do not remove or recycle the source worktree unless integration and any configured push both
+  succeed;
+- stop on conflicts and leave resolution to the user.
+
+Supported strategies mirror common forge merge choices while preserving local determinism:
+
+| Strategy | Contract |
+|---|---|
+| `ff_only` | Move the target only if it can fast-forward to the source branch. |
+| `rebase_ff` | Rebase the source onto the target, then fast-forward the target. |
+| `squash` | Apply the source branch changes onto the target as one new commit. |
+| `merge_commit` | Merge the source into the target with an explicit merge commit. |
+
+`finish` may optionally push the target branch, delete the finished branch, and remove or recycle
+the worktree after successful integration. Push rejection is a blocking result, not a reason to
+retry with force. Cleanup uses finish-aware safety: once a configured strategy has successfully
+integrated the source changes into the target, the source branch/worktree may be cleaned up even
+when the source branch is local-only or was squash-finished. Standalone `remove`/`recycle` keep
+their upstream-merge safety rules.
+
 ## 4. Interfaces
 
 ### Commands
@@ -190,6 +272,8 @@ run.
 | `wktree status --cwd <path>` | Print pool status JSON. |
 | `wktree recycle --cwd <path> --slot <path> [--force]` | Recycle a pooled slot. |
 | `wktree copy --cwd <path> [--json]` | Re-run configured copy setup for the non-canonical worktree containing `cwd`. |
+| `wktree config explain --cwd <path> [--json]` (planned) | Show the effective policy after defaults, matching rules, and exact project overrides. |
+| `wktree finish --cwd <path> [--json] [--strategy <strategy>] [--push] [--remove-worktree] [--delete-branch]` (planned) | Integrate a completed worktree into the canonical root using configured policy. |
 
 ### Structured output rules
 
@@ -239,9 +323,12 @@ recycles the slot in place and reports `kind: "ready"` with `removed: false`:
 ```
 
 Blocked/recoverable failures (when `--json`) emit a `blocked` payload. `reason` is an
-enumerated machine token — `duplicate_branch`, `dirty_slot`, `unmerged_branch`,
-`canonical_root`, `unsafe`, or `blocked` — and `message` is human-readable. Optional
-`branch`, `worktree_path`, and `slot_path` are included when known:
+enumerated machine token — currently `duplicate_branch`, `dirty_slot`, `unmerged_branch`,
+`canonical_root`, `unsafe`, or `blocked` — and `message` is human-readable. Planned
+policy operations extend the reason set with stable tokens such as `dirty_canonical`,
+`wrong_canonical_branch`, `non_ff_canonical`, `dirty_worktree`, `target_not_fresh`,
+`push_rejected`, and `conflict`. Optional `branch`, `worktree_path`, and `slot_path` are
+included when known:
 
 ```json
 {
@@ -294,23 +381,61 @@ With no copy configuration, `copied` and `exclude_paths` are empty arrays.
 
 ### Config
 
-Project config is read from `ct-worktrees/trees.toml` under XDG config home. Each project
-entry may define:
+Config is read from `ct-worktrees/trees.toml` under XDG config home. Implemented project
+entries define exact canonical roots for bootstrap, pools, and copy setup. Planned policy
+configuration adds defaults and root-glob rules that can affect repositories without requiring
+bootstrap setup.
+
+Implemented exact project fields:
 
 | Field | Required | Purpose |
 |---|---|---|
 | `root` | yes | Canonical root worktree path. |
-| `command` | yes | Bootstrap command run as the post-create script. |
+| `command` | currently yes; planned optional | Bootstrap command run as the post-create script. If absent in the planned policy model, no bootstrap script is emitted. |
 | `name` | no | Project identifier; defaults to the basename of `root`. |
 | `pool_size` | no | Enables pooled mode with this many fixed slots. |
 | `copy_mode_default` | no | `copy` or `symlink`; defaults to `copy` and applies to all copy entries unless overridden. |
 | `copy` | no | Files or directories to copy or symlink into created worktrees before `command` runs. |
+
+Planned policy fields:
+
+| Field | Scope | Purpose |
+|---|---|---|
+| `[defaults.add].policy` | global defaults | Fallback add policy when no rule or project overrides it. |
+| `[defaults.finish]` | global defaults | Fallback finish policy when no rule or project overrides it: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`. |
+| `[[rule]].root_glob` | rule | Canonical root glob to match, with leading `~` expansion only. |
+| `[rule.add].policy` | rule | Add policy for matching roots. |
+| `[rule.finish]` | rule | Finish policy for matching roots: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`. |
+| `[project.add].policy` | exact project | Exact-root add policy override. |
+| `[project.finish]` | exact project | Exact-root finish policy override: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`. |
 
 Bootstrap scripts run under bash with `WK_ROOT` and `WK_CREATED` exported (see §3).
 
 Example:
 
 ```toml
+[defaults.add]
+policy = "origin_default"
+
+[defaults.finish]
+enabled = true
+strategy = "ff_only"
+push = false
+remove_worktree = false
+delete_branch = false
+
+[[rule]]
+root_glob = "~/dev/projects/**"
+
+[rule.add]
+policy = "fresh_canonical"
+
+[rule.finish]
+strategy = "squash"
+push = true
+remove_worktree = true
+delete_branch = true
+
 [[project]]
 name = "example"
 root = "~/dev/example"
@@ -321,4 +446,14 @@ copy = [
   { from = "~/my/repo/skill-dir", to = [".claude/skills/skill-dir", ".pi/agents/skill-dir"] },
   { from = ".env.shared", to = ".env.shared", mode = "symlink" },
 ]
+
+[[project]]
+name = "dots"
+root = "~/dev/dots"
+
+[project.add]
+policy = "origin_default"
+
+[project.finish]
+enabled = false
 ```

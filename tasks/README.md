@@ -1,35 +1,52 @@
-# AFK Task Plan: wktree copy setup
+# AFK Task Plan: wktree lifecycle policy and finish
 
 ## Problem statement / MVP goal
 
-Implement the planned `copy` project configuration for `wktree`: optional per-project file/directory copy setup that runs before project bootstrap commands, can be rerun with `wktree copy --cwd <path> [--json]`, refuses unsafe tracked destinations, and keeps the canonical shared exclude file in sync through an idempotent fenced block.
+Implement the planned `wktree` lifecycle policy work now captured in `specs/git-worktrees.md`: config-driven add freshness, effective policy explanation, and a conservative `wktree finish` flow for integrating completed worktrees back into the canonical root.
 
-MVP completion means a user can configure root-relative file copies, object-form absolute/`~`/relative sources, multiple relative destinations, directory copies with deterministic replacement, and then rely on `wktree add`, pooled `ensure`/allocation, and explicit `wktree copy` to apply the same setup behavior.
+MVP completion means a user can set personal defaults such as `~/dev/projects/**` to `fresh_canonical`, keep escape-hatch repositories on `origin_default`, rely on `wktree add` to fail hard instead of building from stale canonical state, inspect effective policy with `wktree config explain`, and finish a clean non-canonical worktree with configured local strategy, optional push, and safe cleanup.
+
+Tasks 1-5 in this plan are historical completed copy-setup tasks and should not be reopened unless a regression blocks the new work. Tasks 6-12 are the active policy/finish implementation plan.
 
 ## Important references
 
-- `specs/git-worktrees.md` — durable copy setup contract, command payloads, config shape, safety rules.
+- `specs/git-worktrees.md` — durable lifecycle contract, planned policy config, add freshness, finish semantics, commands, payloads, safety rules.
+- `specs/README.md` — spec index that must remain accurate as status changes.
 - `README.md` — user-facing command/config reference to update after implementation.
-- `bin/` — TypeScript CLI/engine entry point and config parsing patterns.
-- `nu/wktree/` — Nushell wrapper behavior that runs returned post-create scripts.
+- `src/` — TypeScript CLI/engine, config parsing, git execution, and lifecycle behavior.
+- `nu/wktree/` — Nushell wrapper behavior that runs returned post-create scripts and should stop owning add freshness directly.
 - `tests/` — existing Bun integration and smoke coverage patterns.
 - `AGENTS.md` — project-specific development and validation expectations.
 
 ## Task strategy
 
-The slices build a thin path first, then expand behavior without leaving ambiguous integration gaps:
+The active slices build vertical behavior in dependency order:
 
-1. Add copy config parsing and the explicit `wktree copy` command skeleton so the public API exists and no-copy projects have a deterministic response.
-2. Add the first real end-to-end copy behavior for root-relative file entries, including shared exclude updates and tracked-target refusal.
-3. Extend the same engine path to object entries, multi-target destinations, `~` source expansion, directory copy, and deterministic replacement.
-4. Wire the copy engine into normal worktree setup flows before post-create commands, covering non-pooled and pooled behavior.
-5. Update user-facing docs and final verification once behavior is implemented.
+1. Task 6 adds policy parsing/resolution and `wktree config explain` without changing lifecycle behavior.
+2. Task 7 applies add policy to ordinary non-pooled worktree creation so `fresh_canonical` becomes real in the simplest end-to-end path.
+3. Task 8 extends add policy to pooled paths and removes wrapper-owned freshness so the engine owns the invariant.
+4. Task 9 introduces `wktree finish` with one conservative `ff_only` local strategy and all safety gates.
+5. Task 10 adds the remaining local merge strategies.
+6. Task 11 adds optional push and safe cleanup after successful finish.
+7. Task 12 updates user-facing docs and final spec status.
 
-All slices are AFK. Product decisions have already been captured in the spec; no HITL decision task is required for the MVP.
+All active slices are AFK. The design choices have been captured in the spec and conversation: no background sync daemon, no auto-commit, no force push, no provider/PR workflow, and no automatic conflict resolution.
 
 ## Developer Notes
 
 Append notes here. Do not rewrite earlier notes.
+
+### Task plan amendment: lifecycle policy and finish — 2026-06-22
+
+- Added Tasks 6-12 to implement the newly planned policy config, strict add freshness, and conservative `wktree finish` flow from `specs/git-worktrees.md`.
+- Existing Tasks 1-5 remain complete historical copy-setup work and should not be rewritten.
+- Active plan intentionally keeps daemon sync, auto-commit, force-push, PR/provider workflow, and automatic conflict resolution out of scope.
+
+### Task plan review amendments — 2026-06-22
+
+- Task 6 now explicitly owns the full finish policy schema, field-by-field merge behavior, and `config explain` output for `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`.
+- Task 11 now uses finish-aware cleanup safety so local-only and squash-finished branches can be cleaned up after successful integration without weakening standalone `wktree remove` safety rules.
+- Finish cleanup flags are pinned as `--push`, `--remove-worktree`, and `--delete-branch`, and the spec command table was aligned.
 
 ### Task plan review amendments — 2026-06-17
 

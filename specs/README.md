@@ -7,4 +7,4 @@ chronology.
 
 | Spec | Purpose | Code |
 |---|---|---|
-| [git-worktrees.md](./git-worktrees.md) | Deterministic git worktree lifecycle: commands, identity, safety, pools, config, copy setup | `bin/`, `shared/`, `nu/wktree/` |
+| [git-worktrees.md](./git-worktrees.md) | Deterministic git worktree lifecycle: commands, identity, safety, pools, policy config, copy setup, and planned finish flow | `wktree` |
