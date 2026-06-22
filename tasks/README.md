@@ -111,3 +111,9 @@ Append notes here. Do not rewrite earlier notes.
 - Added `finish --cwd <path> [--json] [--strategy ff_only]` as a local-only fast-forward integration from a clean non-canonical source worktree into the canonical default branch.
 - Finish now fetches `origin`, blocks disabled policy before integration, refuses canonical-root and dirty-source invocations, and emits structured blocked reasons for `dirty_worktree`, `target_not_fresh`, and `conflict`.
 - For `fresh_canonical`, finish reuses canonical freshness checks and fast-forwards the canonical root before integration; for `origin_default`, the target root must already be clean, on the default branch, and not behind `origin/<default>`.
+
+### Task 10 implementation notes — 2026-06-22
+
+- Finish now accepts `ff_only`, `squash`, `merge_commit`, and `rebase_ff` from config or `--strategy`, with the CLI strategy taking precedence.
+- `squash` uses a fixed `finish: <source_branch>` commit message; `merge_commit` forces an explicit merge commit; `rebase_ff` rebases the source worktree then fast-forwards the canonical target.
+- Conflict or failed strategy commands surface as structured `reason: "conflict"` under `--json`; push and cleanup remain untouched for Task 11.

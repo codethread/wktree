@@ -59,6 +59,7 @@ import {
 import type {
 	AddPlan,
 	AddPolicy,
+	FinishStrategy,
 	BlockedPayload,
 	CopiedFile,
 	CopyEntry,
@@ -773,15 +774,14 @@ async function finishCommand(args: string[], deps: Deps) {
 		const explanation = explainPolicy(config, canonical.path);
 		const finishPolicy = explanation.finishPolicy;
 		if (!finishPolicy.enabled) throw new BlockedError("finish is disabled for this repository");
-		const strategy = requestedStrategy ?? finishPolicy.strategy;
-		if (strategy !== "ff_only") throw new UsageError("only --strategy ff_only is supported");
+		const strategy = parseFinishStrategy(requestedStrategy ?? finishPolicy.strategy);
 
 		const sourceStatus = await machineDeps.git.run(["-C", source.path, "status", "--porcelain=v1"]);
 		if (sourceStatus.stdout.trim() !== "") throw new DirtyWorktreeError("source worktree has uncommitted changes");
 
 		await machineDeps.git.run(["-C", canonical.path, "fetch", "origin"]);
 		const targetBranch = await detectOriginDefaultBranch(machineDeps.git, canonical.path);
-		const policy = explainPolicy(config, canonical.path).addPolicy;
+		const policy = explanation.addPolicy;
 		const targetRef = await assertFinishTargetReady({
 			git: machineDeps.git,
 			root: canonical.path,
@@ -789,17 +789,23 @@ async function finishCommand(args: string[], deps: Deps) {
 			targetBranch,
 		});
 
-		const canFastForward = await machineDeps.git.runRaw([
-			"-C",
-			canonical.path,
-			"merge-base",
-			"--is-ancestor",
-			targetRef,
-			`refs/heads/${source.branch}`,
-		]);
-		if (canFastForward.exitCode !== 0) throw new FinishConflictError("source branch cannot fast-forward target branch");
+		if (strategy === "ff_only") {
+			await assertSourceCanFastForwardTarget({
+				git: machineDeps.git,
+				canonicalPath: canonical.path,
+				targetRef,
+				sourceBranch: source.branch,
+			});
+		}
 		if (policy === "fresh_canonical") await fastForwardCanonicalDefault(machineDeps.git, canonical.path, targetBranch);
-		await machineDeps.git.run(["-C", canonical.path, "merge", "--ff-only", source.branch]);
+		await integrateFinishedBranch({
+			git: machineDeps.git,
+			canonicalPath: canonical.path,
+			sourcePath: source.path,
+			sourceBranch: source.branch,
+			targetRef,
+			strategy,
+		});
 
 		return finalizeStructuredResult(
 			{
@@ -1126,6 +1132,71 @@ async function resolveDefaultBaseForNewBranch(options: {
 	if (base) return base;
 	const defaultBranch = await detectOriginDefaultBranch(git, root);
 	return `origin/${defaultBranch}`;
+}
+
+function parseFinishStrategy(value: string): FinishStrategy {
+	if (value === "ff_only" || value === "squash" || value === "merge_commit" || value === "rebase_ff") return value;
+	throw new UsageError("--strategy must be ff_only, rebase_ff, squash, or merge_commit");
+}
+
+async function assertSourceCanFastForwardTarget(options: {
+	git: GitRunner;
+	canonicalPath: string;
+	targetRef: string;
+	sourceBranch: string;
+}): Promise<void> {
+	const {git, canonicalPath, targetRef, sourceBranch} = options;
+	const canFastForward = await git.runRaw([
+		"-C",
+		canonicalPath,
+		"merge-base",
+		"--is-ancestor",
+		targetRef,
+		`refs/heads/${sourceBranch}`,
+	]);
+	if (canFastForward.exitCode !== 0) throw new FinishConflictError("source branch cannot fast-forward target branch");
+}
+
+async function integrateFinishedBranch(options: {
+	git: GitRunner;
+	canonicalPath: string;
+	sourcePath: string;
+	sourceBranch: string;
+	targetRef: string;
+	strategy: FinishStrategy;
+}): Promise<void> {
+	const {git, canonicalPath, sourcePath, sourceBranch, targetRef, strategy} = options;
+	switch (strategy) {
+		case "ff_only":
+			await git.run(["-C", canonicalPath, "merge", "--ff-only", sourceBranch]);
+			return;
+		case "squash": {
+			const merge = await git.runRaw(["-C", canonicalPath, "merge", "--squash", sourceBranch]);
+			if (merge.exitCode !== 0) throw new FinishConflictError("squash merge stopped with conflicts");
+			const commit = await git.runRaw(["-C", canonicalPath, "commit", "-m", `finish: ${sourceBranch}`]);
+			if (commit.exitCode !== 0) throw new FinishConflictError("squash commit failed");
+			return;
+		}
+		case "merge_commit": {
+			const merge = await git.runRaw([
+				"-C",
+				canonicalPath,
+				"merge",
+				"--no-ff",
+				"-m",
+				`Merge branch '${sourceBranch}'`,
+				sourceBranch,
+			]);
+			if (merge.exitCode !== 0) throw new FinishConflictError("merge stopped with conflicts");
+			return;
+		}
+		case "rebase_ff": {
+			const rebase = await git.runRaw(["-C", sourcePath, "rebase", targetRef]);
+			if (rebase.exitCode !== 0) throw new FinishConflictError("rebase stopped with conflicts");
+			await git.run(["-C", canonicalPath, "merge", "--ff-only", sourceBranch]);
+			return;
+		}
+	}
 }
 
 async function assertFinishTargetReady(options: {

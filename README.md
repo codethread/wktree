@@ -58,7 +58,7 @@ wktree status --cwd <path>
 wktree recycle --cwd <path> --slot <path> [--force]
 wktree copy --cwd <path> [--json]
 wktree config explain --cwd <path> [--json]
-wktree finish --cwd <path> [--json] [--strategy ff_only]
+wktree finish --cwd <path> [--json] [--strategy ff_only|rebase_ff|squash|merge_commit]
 ```
 
 Machine consumers should prefer `--json` where available and branch on payload `kind` rather than stderr text.
@@ -88,7 +88,7 @@ Example:
 policy = "origin_default"
 
 [defaults.finish]
-strategy = "ff_only"
+strategy = "ff_only" # ff_only, rebase_ff, squash, or merge_commit
 push = false
 
 [[rule]]

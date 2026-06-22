@@ -978,6 +978,146 @@ integrationDescribe("wktree finish", () => {
 		expect(readFileSync(join(root, "finished.txt"), "utf8")).toBe("finished\n");
 	});
 
+	test("squash integrates source changes as one deterministic target commit", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, '[project.finish]\nstrategy = "squash"\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/squash-finish", "--json"], deps);
+		const worktreePath = `${root}__feature--squash-finish`;
+		await commitFile({repo: worktreePath, path: "one.txt", content: "one\n", message: "one"});
+		await commitFile({repo: worktreePath, path: "two.txt", content: "two\n", message: "two"});
+		const beforeHead = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim();
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({strategy: "squash"});
+		expect((await run(["git", "-C", root, "log", "-1", "--format=%s"])).stdout.trim()).toBe(
+			"finish: feature/squash-finish",
+		);
+		expect((await run(["git", "-C", root, "rev-list", "--count", `${beforeHead}..HEAD`])).stdout.trim()).toBe(
+			"1",
+		);
+		expect(readFileSync(join(root, "one.txt"), "utf8")).toBe("one\n");
+		expect(readFileSync(join(root, "two.txt"), "utf8")).toBe("two\n");
+	});
+
+	test("merge_commit integrates source with an explicit merge commit", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, '[project.finish]\nstrategy = "merge_commit"\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/merge-finish", "--json"], deps);
+		const worktreePath = `${root}__feature--merge-finish`;
+		await commitFile({
+			repo: worktreePath,
+			path: "merge-source.txt",
+			content: "source\n",
+			message: "source work",
+		});
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({strategy: "merge_commit"});
+		expect(
+			(await run(["git", "-C", root, "rev-list", "--parents", "-n", "1", "HEAD"])).stdout.trim().split(" "),
+		).toHaveLength(3);
+		expect(readFileSync(join(root, "merge-source.txt"), "utf8")).toBe("source\n");
+	});
+
+	test("rebase_ff rebases source onto target then fast-forwards target", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, '[project.finish]\nstrategy = "rebase_ff"\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/rebase-finish", "--json"], deps);
+		const worktreePath = `${root}__feature--rebase-finish`;
+		await commitFile({
+			repo: worktreePath,
+			path: "source-rebased.txt",
+			content: "source\n",
+			message: "source work",
+		});
+		await commitFile({repo: root, path: "target-base.txt", content: "target\n", message: "target work"});
+		const targetHead = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim();
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({strategy: "rebase_ff"});
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(
+			(await run(["git", "-C", root, "rev-parse", "refs/heads/feature/rebase-finish"])).stdout.trim(),
+		);
+		expect(
+			(await run(["git", "-C", root, "rev-list", "--parents", "-n", "1", "HEAD"])).stdout.trim().split(" "),
+		).toHaveLength(2);
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD~1"])).stdout.trim()).toBe(targetHead);
+		expect(readFileSync(join(root, "source-rebased.txt"), "utf8")).toBe("source\n");
+	});
+
+	test("non-ff strategy conflict emits structured refusal", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, '[project.finish]\nstrategy = "squash"\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/squash-conflict", "--json"], deps);
+		const worktreePath = `${root}__feature--squash-conflict`;
+		await commitFile({repo: worktreePath, path: "README.md", content: "source\n", message: "source change"});
+		await commitFile({repo: root, path: "README.md", content: "target\n", message: "target change"});
+		const targetHead = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim();
+		const sourceHead = (await run(["git", "-C", worktreePath, "rev-parse", "HEAD"])).stdout.trim();
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "conflict"});
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(targetHead);
+		expect(
+			(await run(["git", "-C", root, "rev-parse", "refs/heads/feature/squash-conflict"])).stdout.trim(),
+		).toBe(sourceHead);
+		expect(existsSync(worktreePath)).toBe(true);
+	});
+
+	test("invalid CLI strategy fails before fresh_canonical mutates target", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, '[project.add]\npolicy = "fresh_canonical"\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/bad-strategy", "--json"], deps);
+		const worktreePath = `${root}__feature--bad-strategy`;
+		await commitFile({
+			repo: worktreePath,
+			path: "bad-strategy.txt",
+			content: "source\n",
+			message: "source work",
+		});
+		await commitOnRemoteDefault({
+			remote,
+			path: "remote-before-usage.txt",
+			content: "remote\n",
+			message: "remote work",
+		});
+		const originalHead = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim();
+
+		await expect(
+			dispatch("finish", ["--cwd", worktreePath, "--json", "--strategy", "bad"], deps),
+		).rejects.toThrow("--strategy must be ff_only");
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(originalHead);
+	});
+
+	test("explicit CLI strategy overrides configured finish strategy", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, '[project.finish]\nstrategy = "squash"\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/strategy-override", "--json"], deps);
+		const worktreePath = `${root}__feature--strategy-override`;
+		await commitFile({
+			repo: worktreePath,
+			path: "override.txt",
+			content: "override\n",
+			message: "override work",
+		});
+		const sourceHead = (await run(["git", "-C", worktreePath, "rev-parse", "HEAD"])).stdout.trim();
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json", "--strategy", "ff_only"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({strategy: "ff_only"});
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(sourceHead);
+		expect((await run(["git", "-C", root, "log", "-1", "--format=%s"])).stdout.trim()).toBe("override work");
+	});
+
 	test("fresh_canonical conflict refuses without first fast-forwarding target", async () => {
 		const {root, remote} = await initRepoWithOrigin(tmp);
 		writeConfig(tmp, root, "echo ready", undefined, '[project.add]\npolicy = "fresh_canonical"\n');

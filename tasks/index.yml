@@ -47,7 +47,7 @@ tasks:
   - id: 10
     description: Add finish merge strategies
     task_file: tasks/010-add-finish-merge-strategies.md
-    status: pending
+    status: complete
     blocked_by: [9]
   - id: 11
     description: Add finish push and cleanup
