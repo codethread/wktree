@@ -87,3 +87,9 @@ Append notes here. Do not rewrite earlier notes.
 
 - README now documents copy config forms, destination relativity, leading-`~` source expansion, setup ordering, and explicit `wktree copy` usage.
 - The durable spec status was moved back to `Implemented` after final validation confirmed the documented copy behavior is covered by the current implementation and tests.
+
+### Task 6 implementation notes — 2026-06-22
+
+- Added policy parsing for defaults, root-glob rules, and exact project overrides, with field-by-field finish policy merging and `wktree config explain` JSON output.
+- Exact project entries can now omit `command` only when they are policy-only; pools/copy/bootstrap setup still require a command.
+- Root glob matching intentionally supports only leading `~/` expansion plus simple `*`/`**` matching; no environment or shell expansion was added.

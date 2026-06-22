@@ -27,7 +27,7 @@ tasks:
   - id: 6
     description: Add policy config resolution
     task_file: tasks/006-add-policy-config-resolution.md
-    status: pending
+    status: complete
     blocked_by: []
   - id: 7
     description: Enforce nonpooled add policy

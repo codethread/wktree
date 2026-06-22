@@ -28,6 +28,7 @@ import {
 	ConfigError,
 	dispatch,
 	EXIT_CODES,
+	explainPolicy,
 	generatePostCreateScript,
 	HookError,
 	LiveHookRunner,
@@ -181,7 +182,6 @@ future_field = "ignored"
 
 	test.each([
 		{name: "missing root", toml: '[[project]]\ncommand = "echo ok"', message: "root"},
-		{name: "missing command", toml: '[[project]]\nroot = "/tmp/repo"', message: "command"},
 		{
 			name: "pool_size zero",
 			toml: '[[project]]\nroot = "/tmp/repo"\ncommand = "x"\npool_size = 0',
@@ -235,6 +235,120 @@ command = "echo ok"
 shell = "nu"
 `),
 		).toThrow("command always runs under bash");
+	});
+
+	test("resolves built-in policy defaults", () => {
+		const policy = explainPolicy(parseConfig(""), "/tmp/repo");
+		expect(policy.addPolicy).toBe("origin_default");
+		expect(policy.finishPolicy).toEqual({
+			enabled: true,
+			strategy: "ff_only",
+			push: false,
+			removeWorktree: false,
+			deleteBranch: false,
+		});
+	});
+
+	test("matching rules apply in file order with later fields winning", () => {
+		const config = parseConfig(`
+[[rule]]
+root_glob = "/tmp/**"
+[rule.add]
+policy = "fresh_canonical"
+[rule.finish]
+strategy = "squash"
+push = true
+
+[[rule]]
+root_glob = "/tmp/repo"
+[rule.finish]
+push = false
+remove_worktree = true
+`);
+		const policy = explainPolicy(config, "/tmp/repo");
+		expect(policy.matchedRules.map((rule) => rule.rootGlob)).toEqual(["/tmp/**", "/tmp/repo"]);
+		expect(policy.addPolicy).toBe("fresh_canonical");
+		expect(policy.finishPolicy).toMatchObject({strategy: "squash", push: false, removeWorktree: true});
+	});
+
+	test.each([
+		{name: "pool_size", extra: "pool_size = 1"},
+		{name: "copy", extra: 'copy = [".env"]'},
+		{name: "copy_mode_default", extra: 'copy_mode_default = "symlink"'},
+	])("requires command when project uses $name", ({extra}) => {
+		expect(() =>
+			parseConfig(`
+[[project]]
+root = "/tmp/repo"
+${extra}
+`),
+		).toThrow(ConfigError);
+	});
+
+	test("exact project overrides matching rule and can omit command for policy only", () => {
+		const config = parseConfig(`
+[[rule]]
+root_glob = "/tmp/**"
+[rule.add]
+policy = "fresh_canonical"
+[rule.finish]
+strategy = "squash"
+
+[[project]]
+name = "repo"
+root = "/tmp/repo"
+[project.add]
+policy = "origin_default"
+[project.finish]
+enabled = false
+`);
+		const project = config.projects[0];
+		expect(project?.command).toBeNull();
+		const policy = explainPolicy(config, "/tmp/repo");
+		expect(policy.project?.name).toBe("repo");
+		expect(policy.addPolicy).toBe("origin_default");
+		expect(policy.finishPolicy).toMatchObject({enabled: false, strategy: "squash"});
+	});
+
+	test("finish policy merges field-by-field across defaults rules and project", () => {
+		const policy = explainPolicy(
+			parseConfig(`
+[defaults.finish]
+strategy = "rebase_ff"
+push = true
+
+[[rule]]
+root_glob = "/tmp/**"
+[rule.finish]
+remove_worktree = true
+
+[[project]]
+root = "/tmp/repo"
+[project.finish]
+delete_branch = true
+`),
+			"/tmp/repo",
+		);
+		expect(policy.finishPolicy).toEqual({
+			enabled: true,
+			strategy: "rebase_ff",
+			push: true,
+			removeWorktree: true,
+			deleteBranch: true,
+		});
+	});
+
+	test.each([
+		{config: '[defaults.add]\npolicy = "bad"', message: "policy"},
+		{config: '[defaults.finish]\nstrategy = "bad"', message: "strategy"},
+		{config: '[defaults.finish]\npush = "yes"', message: "boolean"},
+		{config: '[[rule]]\nroot_glob = "~repo/*"', message: "root_glob"},
+		{config: 'defaults = "bad"', message: "defaults"},
+		{config: '[defaults.add]\npolciy = "fresh_canonical"', message: "unknown field"},
+		{config: "[defaults.finish]\nremoveWorktree = true", message: "unknown field"},
+	])("invalid policy config fails loudly", ({config, message}) => {
+		expect(() => parseConfig(config)).toThrow(ConfigError);
+		expect(() => parseConfig(config)).toThrow(message);
 	});
 });
 
@@ -1340,6 +1454,38 @@ integrationDescribe("wktree read-only commands", () => {
 
 		const pathResult = await dispatch("path", ["--cwd", root, "--branch", "feature/cool"], deps);
 		expect(pathResult.stdout).toBe(`${root}__feature--cool\n`);
+	});
+
+	test("config explain reports effective policy JSON", async () => {
+		let root = join(tmp, "repo");
+		await initRepo(root);
+		root = realpathSync(root);
+		const configHome = join(tmp, "config-explain");
+		mkdirSync(join(configHome, "ct-worktrees"), {recursive: true});
+		writeFileSync(
+			join(configHome, "ct-worktrees", "trees.toml"),
+			`[defaults.finish]\nstrategy = "rebase_ff"\n\n[[rule]]\nroot_glob = "${realpathSync(tmp)}/**"\n[rule.add]\npolicy = "fresh_canonical"\n[rule.finish]\npush = true\n\n[[project]]\nname = "repo"\nroot = "${root}"\n[project.finish]\ndelete_branch = true\n`,
+		);
+		process.env.XDG_CONFIG_HOME = configHome;
+
+		const result = await dispatch("config", ["explain", "--cwd", root, "--json"], deps);
+		const payload = JSON.parse(result.stdout ?? "{}");
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(payload).toEqual({
+			kind: "config_explain",
+			root,
+			matched_rules: [{root_glob: `${realpathSync(tmp)}/**`}],
+			project: {name: "repo", root},
+			add: {policy: "fresh_canonical"},
+			finish: {
+				enabled: true,
+				strategy: "rebase_ff",
+				push: true,
+				remove_worktree: false,
+				delete_branch: true,
+			},
+		});
 	});
 
 	test("list fails fast on malformed config", async () => {

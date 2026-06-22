@@ -3,20 +3,38 @@ import type {Worktree} from "./git/worktrees.ts";
 
 export type {Worktree} from "./git/worktrees.ts";
 
-export interface ProjectConfig {
+export type AddPolicy = "origin_default" | "fresh_canonical";
+export type FinishStrategy = "ff_only" | "rebase_ff" | "squash" | "merge_commit";
+export interface FinishPolicy {
+	enabled: boolean;
+	strategy: FinishStrategy;
+	push: boolean;
+	removeWorktree: boolean;
+	deleteBranch: boolean;
+}
+export interface PolicyTables {
+	add?: {policy: AddPolicy};
+	finish?: Partial<FinishPolicy>;
+}
+
+export interface ProjectConfig extends PolicyTables {
 	name: string | null;
 	root: string;
-	command: string;
+	command: string | null;
 	poolSize: number | null;
 	copyModeDefault: CopyMode;
 	copy: CopyEntry[];
+}
+
+export interface PolicyRule extends PolicyTables {
+	rootGlob: string;
 }
 
 export type CopyMode = "copy" | "symlink";
 export type CopyEntry = {from: string; to: string[]; mode: CopyMode};
 export type CopiedFile = {from: string; to: string; type: "file" | "directory" | "symlink"};
 
-export type TreesConfig = {projects: ProjectConfig[]};
+export type TreesConfig = {projects: ProjectConfig[]; rules: PolicyRule[]; defaults: PolicyTables};
 
 export interface Slot {
 	index: number;

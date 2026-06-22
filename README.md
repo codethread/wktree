@@ -57,6 +57,7 @@ wktree ensure --cwd <path>
 wktree status --cwd <path>
 wktree recycle --cwd <path> --slot <path> [--force]
 wktree copy --cwd <path> [--json]
+wktree config explain --cwd <path> [--json]
 ```
 
 Machine consumers should prefer `--json` where available and branch on payload `kind` rather than stderr text.
@@ -77,11 +78,24 @@ The wrapper runs any returned post-create script and then opens or switches to t
 
 ## Project configuration
 
-Project config is read from `ct-worktrees/trees.toml` under XDG config home. Projects can define `name`, `root`, `command`, optional `pool_size`, and optional `copy` entries.
+Project config is read from `ct-worktrees/trees.toml` under XDG config home. Projects can define `name`, `root`, optional `command`, optional `pool_size`, optional `copy` entries, and policy overrides. `command` is required when a project uses pools or copy/bootstrap setup, but policy-only exact projects may omit it. Effective policy can be inspected with `wktree config explain --cwd <path> [--json]`.
 
 Example:
 
 ```toml
+[defaults.add]
+policy = "origin_default"
+
+[defaults.finish]
+strategy = "ff_only"
+push = false
+
+[[rule]]
+root_glob = "~/dev/projects/**"
+
+[rule.add]
+policy = "fresh_canonical"
+
 [[project]]
 name = "example"
 root = "~/dev/example"
@@ -93,7 +107,12 @@ copy = [
   { from = "~/my/repo/skill-dir", to = [".claude/skills/skill-dir", ".pi/agents/skill-dir"] },
   { from = ".env.shared", to = ".env.shared", mode = "symlink" },
 ]
+
+[project.finish]
+remove_worktree = true
 ```
+
+Policy resolution starts with built-in defaults, applies matching `[[rule]]` entries in file order, then applies exact `[[project]]` overrides. Finish policy fields merge field-by-field.
 
 String `copy` entries copy root-relative files to the same relative path in the created worktree by default. Object entries use `from` and `to`; `from` may be root-relative, absolute, or start with `~`, and `to` may be a destination string or array of destination strings. Destination paths are always relative to the created worktree. `copy_mode_default` may be `"copy"` or `"symlink"` and applies to all entries unless an object entry sets `mode`. Symlink mode creates destination symlinks to the resolved source target. Copy setup runs before the configured `command`, and can be rerun for an existing non-root worktree with `wktree copy --cwd <path> [--json]` or `wk copy [--json]`.
 

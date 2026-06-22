@@ -105,6 +105,17 @@ export async function main(argv: string[] = Bun.argv, deps: Deps = createLiveDep
 			await runAction("copy", optsToArgs(opts), deps);
 		});
 
+	program
+		.command("config")
+		.description("Inspect effective configuration")
+		.command("explain")
+		.description("Show effective policy for a repository")
+		.requiredOption("--cwd <path>", "Path within git repository")
+		.option("--json", "Machine-readable output")
+		.action(async (opts) => {
+			await runAction("config", ["explain", ...optsToArgs(opts)], deps);
+		});
+
 	try {
 		await program.parseAsync(argv);
 	} catch (error) {

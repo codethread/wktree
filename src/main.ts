@@ -22,6 +22,7 @@ import {
 import {tmpdir} from "node:os";
 import {basename, dirname, join, resolve} from "node:path";
 import {
+	explainPolicy,
 	findProjectForRoot,
 	normalizeExistingPath,
 	readConfig,
@@ -70,7 +71,7 @@ import type {
 	Worktree,
 } from "./types.ts";
 
-export {parseConfig} from "./config.ts";
+export {explainPolicy, parseConfig} from "./config.ts";
 export {LiveHookRunner} from "./hooks.ts";
 export {
 	BlockedError,
@@ -91,8 +92,11 @@ export {
 export type {
 	CopiedFile,
 	CopyEntry,
+	AddPolicy,
 	CopyMode,
 	Deps,
+	FinishPolicy,
+	FinishStrategy,
 	HookRunner,
 	PickerItem,
 	PickerService,
@@ -118,6 +122,7 @@ Subcommands:
   status    Print pool status JSON
   recycle   Recycle a pooled slot
   copy      Re-run configured copy setup
+  config    Inspect effective configuration
 
 Options:
   -h, --help  Show this help message
@@ -161,6 +166,8 @@ export async function dispatch(
 			return recycleCommand(args, deps);
 		case "copy":
 			return copyCommand(args, deps);
+		case "config":
+			return configCommand(args, deps);
 		default:
 			return {stderr: USAGE, exitCode: EXIT_CODES.USAGE};
 	}
@@ -287,7 +294,7 @@ async function addCommand(args: string[], deps: Deps) {
 			throw error;
 		}
 
-		const postCreateScriptPath = project
+		const postCreateScriptPath = project?.command
 			? writePostCreateScript({project, root: canonicalRoot, created: worktreePath, branch, pooled: false})
 			: null;
 		const plan: AddPlan = {
@@ -413,6 +420,7 @@ async function allocatePooledSlot(options: {
 		await rollbackPooledAllocation({git: deps.git, root, slot, branch, branchState, originalBranchHead});
 		throw error;
 	}
+	if (!project.command) throw new ConfigError(`project ${project.name ?? project.root} requires command for pooled setup`);
 	const postCreateScriptPath = writePostCreateScript({
 		project,
 		root,
@@ -706,6 +714,43 @@ async function copyCommand(args: string[], deps: Deps) {
 	}
 }
 
+async function configCommand(args: string[], deps: Deps) {
+	const [topic, ...rest] = args;
+	if (topic !== "explain") throw new UsageError("expected config explain");
+	const opts = parseOptions(rest);
+	const cwd = requireOption(opts, "cwd");
+	const output = parseOutputMode(opts);
+	const canonicalRoot = await resolveCanonicalRoot(deps.git, cwd);
+	const explanation = explainPolicy(readConfig(), canonicalRoot);
+	const payload = toConfigExplainPayload(explanation);
+	if (output.json) return {stdout: `${JSON.stringify(payload, null, 2)}\n`, exitCode: EXIT_CODES.SUCCESS};
+	const matchedRules = payload.matched_rules.map((rule) => rule.root_glob).join(", ") || "(none)";
+	const project = payload.project ? `${payload.project.name ?? "(unnamed)"} ${payload.project.root}` : "(none)";
+	return {
+		stdout: `root: ${payload.root}\nmatched_rules: ${matchedRules}\nproject: ${project}\nadd.policy: ${payload.add.policy}\nfinish.enabled: ${payload.finish.enabled}\nfinish.strategy: ${payload.finish.strategy}\nfinish.push: ${payload.finish.push}\nfinish.remove_worktree: ${payload.finish.remove_worktree}\nfinish.delete_branch: ${payload.finish.delete_branch}\n`,
+		exitCode: EXIT_CODES.SUCCESS,
+	};
+}
+
+function toConfigExplainPayload(explanation: ReturnType<typeof explainPolicy>) {
+	return {
+		kind: "config_explain",
+		root: explanation.canonicalRoot,
+		matched_rules: explanation.matchedRules.map((rule) => ({root_glob: rule.rootGlob})),
+		project: explanation.project
+			? {name: explanation.project.name, root: explanation.project.root}
+			: null,
+		add: {policy: explanation.addPolicy},
+		finish: {
+			enabled: explanation.finishPolicy.enabled,
+			strategy: explanation.finishPolicy.strategy,
+			push: explanation.finishPolicy.push,
+			remove_worktree: explanation.finishPolicy.removeWorktree,
+			delete_branch: explanation.finishPolicy.deleteBranch,
+		},
+	};
+}
+
 async function captureExistingBranchHead(options: {
 	git: GitRunner;
 	root: string;
@@ -838,6 +883,7 @@ async function ensurePool(
 		await ensurePlaceholderBranch({git: deps.git, root, branch, trunk: state.trunk});
 		const createdWorktree = !slot.exists;
 		if (createdWorktree) await deps.git.run(["-C", root, "worktree", "add", slot.path, branch]);
+		if (!project.command) throw new ConfigError(`project ${project.name ?? project.root} requires command for pooled setup`);
 		const postCreateScriptPath = writePostCreateScript({
 			project,
 			root,
@@ -1032,6 +1078,7 @@ function writePostCreateScript(options: {
 	pooled: boolean;
 }): string {
 	const {project, root, created, pooled} = options;
+	if (!project.command) throw new ConfigError(`project ${project.name ?? project.root} requires command for post-create script`);
 	const session = sessionNameForWorktreePath(created);
 	const sessionDir = mkdtempSync(join(tmpdir(), `${session}.wktree.`));
 	const postCreateScriptPath = resolve(sessionDir, "post-create.sh");
