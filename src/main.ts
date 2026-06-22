@@ -37,6 +37,7 @@ import {
 	DirtyWorktreeError,
 	DuplicateBranchError,
 	FinishConflictError,
+	PushRejectedError,
 	EXIT_CODES,
 	NonFastForwardCanonicalError,
 	PickerCancelled,
@@ -91,6 +92,7 @@ export {
 	DuplicateBranchError,
 	EXIT_CODES,
 	FinishConflictError,
+	PushRejectedError,
 	HookError,
 	PickerCancelled,
 	ReservedPrefixError,
@@ -771,10 +773,19 @@ async function finishCommand(args: string[], deps: Deps) {
 		if (!source.branch) throw new UsageError("finish requires a source worktree checked out on a branch");
 		sourceBranch = source.branch;
 
+		const project = findProjectForRoot(config, canonical.path);
 		const explanation = explainPolicy(config, canonical.path);
 		const finishPolicy = explanation.finishPolicy;
 		if (!finishPolicy.enabled) throw new BlockedError("finish is disabled for this repository");
 		const strategy = parseFinishStrategy(requestedStrategy ?? finishPolicy.strategy);
+		const push = finishPolicy.push || opts.push === true;
+		const removeWorktree = finishPolicy.removeWorktree || opts["remove-worktree"] === true;
+		const deleteBranch = finishPolicy.deleteBranch || opts["delete-branch"] === true;
+		if (deleteBranch && !removeWorktree) {
+			throw new UnsafeOperationError(
+				"cannot delete source branch while its worktree remains checked out; enable remove_worktree cleanup",
+			);
+		}
 
 		const sourceStatus = await machineDeps.git.run(["-C", source.path, "status", "--porcelain=v1"]);
 		if (sourceStatus.stdout.trim() !== "") throw new DirtyWorktreeError("source worktree has uncommitted changes");
@@ -807,6 +818,24 @@ async function finishCommand(args: string[], deps: Deps) {
 			strategy,
 		});
 
+		const cleanupActions: string[] = [];
+		if (push) {
+			const pushed = await machineDeps.git.runRaw(["-C", canonical.path, "push", "origin", targetBranch]);
+			if (pushed.exitCode !== 0) throw new PushRejectedError(`push rejected for ${targetBranch}`);
+			cleanupActions.push("push");
+		}
+		if (removeWorktree) {
+			await cleanupFinishedWorktree({
+				git: machineDeps.git,
+				project,
+				root: canonical.path,
+				source,
+				deleteBranch,
+			});
+			cleanupActions.push(source.pool ? "recycle_worktree" : "remove_worktree");
+			if (deleteBranch) cleanupActions.push("delete_branch");
+		}
+
 		return finalizeStructuredResult(
 			{
 				kind: "ready",
@@ -815,6 +844,7 @@ async function finishCommand(args: string[], deps: Deps) {
 				source_branch: source.branch,
 				target_branch: targetBranch,
 				strategy,
+				cleanup_actions: cleanupActions,
 			},
 			output,
 		);
@@ -961,6 +991,31 @@ async function recycleSlot(options: {
 	}
 }
 
+async function cleanupFinishedWorktree(options: {
+	git: GitRunner;
+	project: ProjectConfig | undefined;
+	root: string;
+	source: Worktree;
+	deleteBranch: boolean;
+}): Promise<void> {
+	const {git, project, root, source, deleteBranch} = options;
+	if (!source.branch) throw new UsageError("finish cleanup requires a source branch");
+	const status = await git.run(["-C", source.path, "status", "--porcelain=v1"]);
+	if (status.stdout.trim() !== "") throw new DirtyWorktreeError("source worktree has uncommitted changes");
+	if (project?.poolSize && source.pool) {
+		const state = await buildPoolState(project, await listWorktrees(git, root), git);
+		const slot = state.slots.find((candidate) => normalizeExistingPath(candidate.path) === normalizeExistingPath(source.path));
+		if (!slot) throw new UsageError(`pool slot not found: ${source.path}`);
+		const placeholderBranch = `wk-pool/feat${slot.index}`;
+		await ensurePlaceholderBranch({git, root, branch: placeholderBranch, trunk: state.trunk});
+		await git.run(["-C", source.path, "checkout", "-B", placeholderBranch, `origin/${state.trunk}`]);
+		if (deleteBranch) await git.run(["-C", root, "branch", "-D", source.branch]);
+		return;
+	}
+	await git.run(["-C", root, "worktree", "remove", source.path]);
+	if (deleteBranch) await git.run(["-C", root, "branch", "-D", source.branch]);
+}
+
 async function assertBranchHasMergedUpstream(git: GitRunner, root: string, branch: string): Promise<void> {
 	const upstream = await git.runRaw(["-C", root, "rev-parse", "--abbrev-ref", `${branch}@{upstream}`]);
 	if (upstream.exitCode !== 0 || upstream.stdout.trim() === "") {
@@ -1063,7 +1118,14 @@ function parseOptions(args: string[]) {
 	const opts: Record<string, string | boolean> = {};
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
-		if (arg === "--json" || arg === "--force" || arg === "--keep-branch") {
+		if (
+			arg === "--json" ||
+			arg === "--force" ||
+			arg === "--keep-branch" ||
+			arg === "--push" ||
+			arg === "--remove-worktree" ||
+			arg === "--delete-branch"
+		) {
 			opts[arg.slice(2)] = true;
 			continue;
 		}
@@ -1394,6 +1456,7 @@ function toBlockedPayload(
 	else if (error instanceof NonFastForwardCanonicalError) reason = "non_ff_canonical";
 	else if (error instanceof TargetNotFreshError) reason = "target_not_fresh";
 	else if (error instanceof FinishConflictError) reason = "conflict";
+	else if (error instanceof PushRejectedError) reason = "push_rejected";
 	else if (error instanceof UnmergedBranchError) reason = "unmerged_branch";
 	else if (error instanceof CanonicalRootError) reason = "canonical_root";
 	else if (error.exitCode === EXIT_CODES.UNSAFE) reason = "unsafe";

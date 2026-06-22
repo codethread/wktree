@@ -1,6 +1,6 @@
 # Git Worktrees Engine
 
-**Status:** Partial — current lifecycle, copy setup, policy-driven add freshness, and local `finish` strategies are implemented; push and cleanup are planned
+**Status:** Partial — current lifecycle, copy setup, policy-driven add freshness, and `finish` local integration, push, and cleanup are implemented; final user-facing finish documentation remains in progress
 **Last Updated:** 2026-06-22
 
 ## 1. Overview
@@ -273,8 +273,7 @@ their upstream-merge safety rules.
 | `wktree recycle --cwd <path> --slot <path> [--force]` | Recycle a pooled slot. |
 | `wktree copy --cwd <path> [--json]` | Re-run configured copy setup for the non-canonical worktree containing `cwd`. |
 | `wktree config explain --cwd <path> [--json]` | Show the effective policy after defaults, matching rules, and exact project overrides. |
-| `wktree finish --cwd <path> [--json] [--strategy ff_only\|rebase_ff\|squash\|merge_commit]` | Integrate a completed worktree into the canonical root with a local strategy. |
-| `wktree finish --cwd <path> [--json] [--strategy <strategy>] [--push] [--remove-worktree] [--delete-branch]` (planned) | Extend finish with additional strategies, push, and cleanup. |
+| `wktree finish --cwd <path> [--json] [--strategy ff_only\|rebase_ff\|squash\|merge_commit] [--push] [--remove-worktree] [--delete-branch]` | Integrate a completed worktree into the canonical root, optionally push the target branch, then remove/recycle the source worktree and delete the source branch. |
 
 ### Structured output rules
 

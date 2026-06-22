@@ -52,7 +52,7 @@ tasks:
   - id: 11
     description: Add finish push and cleanup
     task_file: tasks/011-add-finish-push-and-cleanup.md
-    status: pending
+    status: complete
     blocked_by: [10]
   - id: 12
     description: Document policy and finish

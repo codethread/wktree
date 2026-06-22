@@ -111,6 +111,9 @@ export async function main(argv: string[] = Bun.argv, deps: Deps = createLiveDep
 		.requiredOption("--cwd <path>", "Path within source worktree")
 		.option("--json", "Machine-readable output")
 		.option("--strategy <strategy>", "Integration strategy")
+		.option("--push", "Push the target branch after integration")
+		.option("--remove-worktree", "Remove or recycle the source worktree after integration")
+		.option("--delete-branch", "Delete the source branch after integration")
 		.action(async (opts) => {
 			await runAction("finish", optsToArgs(opts), deps);
 		});

@@ -117,3 +117,10 @@ Append notes here. Do not rewrite earlier notes.
 - Finish now accepts `ff_only`, `squash`, `merge_commit`, and `rebase_ff` from config or `--strategy`, with the CLI strategy taking precedence.
 - `squash` uses a fixed `finish: <source_branch>` commit message; `merge_commit` forces an explicit merge commit; `rebase_ff` rebases the source worktree then fast-forwards the canonical target.
 - Conflict or failed strategy commands surface as structured `reason: "conflict"` under `--json`; push and cleanup remain untouched for Task 11.
+
+### Task 11 implementation notes — 2026-06-22
+
+- `finish` now accepts config/flag enabled push, source worktree removal or pooled recycle, and source branch deletion, with deterministic `cleanup_actions` in ready JSON payloads.
+- Push uses a normal `git push origin <target_branch>` and maps any rejection/failure to `reason: "push_rejected"`; cleanup is skipped when push fails.
+- Finish cleanup intentionally uses a separate integrated-branch safety path from standalone `remove`/`recycle`: the source must still be clean, but local-only and squash-finished branches can be removed/recycled after successful integration.
+- Branch deletion currently requires worktree cleanup in the same finish invocation because Git refuses deleting a branch still checked out in a linked worktree; attempting deletion alone returns a structured unsafe blocked payload before integration.

@@ -978,6 +978,184 @@ integrationDescribe("wktree finish", () => {
 		expect(readFileSync(join(root, "finished.txt"), "utf8")).toBe("finished\n");
 	});
 
+	test("pushes target branch after successful finish when enabled", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, "[project.finish]\npush = true\n");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/push-finish", "--json"], deps);
+		const worktreePath = `${root}__feature--push-finish`;
+		await commitFile({repo: worktreePath, path: "pushed.txt", content: "pushed\n", message: "pushed work"});
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({cleanup_actions: ["push"]});
+		expect((await run(["git", "-C", remote, "show", "main:pushed.txt"])).stdout).toBe("pushed\n");
+	});
+
+	test("push rejection blocks configured cleanup and preserves source worktree and branch", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(
+			tmp,
+			root,
+			"echo ready",
+			undefined,
+			"[project.finish]\npush = true\nremove_worktree = true\ndelete_branch = true\n",
+		);
+		await dispatch("add", ["--cwd", root, "--branch", "feature/push-reject", "--json"], deps);
+		const worktreePath = `${root}__feature--push-reject`;
+		await commitFile({repo: worktreePath, path: "reject.txt", content: "source\n", message: "source work"});
+		writeFileSync(join(remote, "hooks", "pre-receive"), "#!/bin/sh\nexit 1\n");
+		chmodSync(join(remote, "hooks", "pre-receive"), 0o755);
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "push_rejected"});
+		expect(existsSync(worktreePath)).toBe(true);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/push-reject"])).exitCode,
+		).toBe(0);
+	});
+
+	test("removes a non-pooled source worktree after finish when cleanup is enabled", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, "[project.finish]\nremove_worktree = true\n");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/remove-after-finish", "--json"], deps);
+		const worktreePath = `${root}__feature--remove-after-finish`;
+		await commitFile({repo: worktreePath, path: "remove.txt", content: "remove\n", message: "remove work"});
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({cleanup_actions: ["remove_worktree"]});
+		expect(existsSync(worktreePath)).toBe(false);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/remove-after-finish"]))
+				.exitCode,
+		).toBe(0);
+	});
+
+	test("recycles a pooled local-only source worktree after finish while preserving ignored files", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(
+			tmp,
+			root,
+			"mkdir -p node_modules; touch node_modules/.keep",
+			1,
+			"[project.finish]\nremove_worktree = true\n",
+		);
+		await dispatch("ensure", ["--cwd", root], testDeps());
+		const excludePath = (
+			await run(["git", "-C", `${root}__feat1`, "rev-parse", "--git-path", "info/exclude"])
+		).stdout.trim();
+		writeFileSync(resolve(`${root}__feat1`, excludePath), "node_modules/\n");
+		await dispatch(
+			"add",
+			["--cwd", root, "--branch", "feature/pooled-finish", "--slot", `${root}__feat1`, "--json"],
+			testDeps(),
+		);
+		await commitFile({
+			repo: `${root}__feat1`,
+			path: "pooled.txt",
+			content: "pooled\n",
+			message: "pooled work",
+		});
+
+		const result = await dispatch("finish", ["--cwd", `${root}__feat1`, "--json"], testDeps());
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({cleanup_actions: ["recycle_worktree"]});
+		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
+			"wk-pool/feat1",
+		);
+		expect(existsSync(join(`${root}__feat1`, "node_modules", ".keep"))).toBe(true);
+	});
+
+	test("deletes source branch after squash finish when configured", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(
+			tmp,
+			root,
+			"echo ready",
+			undefined,
+			'[project.finish]\nstrategy = "squash"\nremove_worktree = true\ndelete_branch = true\n',
+		);
+		await dispatch("add", ["--cwd", root, "--branch", "feature/delete-after-squash", "--json"], deps);
+		const worktreePath = `${root}__feature--delete-after-squash`;
+		await commitFile({
+			repo: worktreePath,
+			path: "squash-delete.txt",
+			content: "delete\n",
+			message: "delete work",
+		});
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			cleanup_actions: ["remove_worktree", "delete_branch"],
+		});
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/delete-after-squash"]))
+				.exitCode,
+		).not.toBe(0);
+	});
+
+	test("explicit finish cleanup flags enable push, removal, and branch deletion", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/flag-cleanup", "--json"], deps);
+		const worktreePath = `${root}__feature--flag-cleanup`;
+		await commitFile({
+			repo: worktreePath,
+			path: "flag-cleanup.txt",
+			content: "flags\n",
+			message: "flag cleanup",
+		});
+
+		const result = await dispatch(
+			"finish",
+			["--cwd", worktreePath, "--json", "--push", "--remove-worktree", "--delete-branch"],
+			deps,
+		);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			cleanup_actions: ["push", "remove_worktree", "delete_branch"],
+		});
+		expect((await run(["git", "-C", remote, "show", "main:flag-cleanup.txt"])).stdout).toBe("flags\n");
+		expect(existsSync(worktreePath)).toBe(false);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/flag-cleanup"])).exitCode,
+		).not.toBe(0);
+	});
+
+	test("cleanup refusal returns structured payload without integration or force deletion", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", undefined, "[project.finish]\ndelete_branch = true\n");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/delete-without-remove", "--json"], deps);
+		const worktreePath = `${root}__feature--delete-without-remove`;
+		await commitFile({
+			repo: worktreePath,
+			path: "cleanup-refusal.txt",
+			content: "cleanup\n",
+			message: "cleanup work",
+		});
+		const originalHead = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim();
+
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.UNSAFE);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "unsafe"});
+		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(originalHead);
+		expect((await runRaw(["git", "-C", root, "show", "HEAD:cleanup-refusal.txt"])).exitCode).not.toBe(0);
+		expect(existsSync(worktreePath)).toBe(true);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/delete-without-remove"]))
+				.exitCode,
+		).toBe(0);
+	});
+
 	test("squash integrates source changes as one deterministic target commit", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeConfig(tmp, root, "echo ready", undefined, '[project.finish]\nstrategy = "squash"\n');

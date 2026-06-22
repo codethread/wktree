@@ -58,7 +58,7 @@ wktree status --cwd <path>
 wktree recycle --cwd <path> --slot <path> [--force]
 wktree copy --cwd <path> [--json]
 wktree config explain --cwd <path> [--json]
-wktree finish --cwd <path> [--json] [--strategy ff_only|rebase_ff|squash|merge_commit]
+wktree finish --cwd <path> [--json] [--strategy ff_only|rebase_ff|squash|merge_commit] [--push] [--remove-worktree] [--delete-branch]
 ```
 
 Machine consumers should prefer `--json` where available and branch on payload `kind` rather than stderr text.

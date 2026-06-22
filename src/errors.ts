@@ -50,6 +50,7 @@ export class WrongCanonicalBranchError extends BlockedError {}
 export class NonFastForwardCanonicalError extends BlockedError {}
 export class TargetNotFreshError extends BlockedError {}
 export class FinishConflictError extends BlockedError {}
+export class PushRejectedError extends BlockedError {}
 export class ReservedPrefixError extends UsageError {}
 export class CanonicalRootError extends UnsafeOperationError {}
 export class HookError extends WktreeError {
