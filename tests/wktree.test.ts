@@ -800,6 +800,24 @@ integrationDescribe("wktree non-pool add", () => {
 		expect(existsSync(`${root}__feature--non-ff`)).toBe(false);
 	});
 
+	test("fresh_canonical explicit base bypasses canonical update requirement", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		await createRemoteBranch(remote, "base/stacked");
+		writeConfig(tmp, root, "echo ready", undefined, '[project.add]\npolicy = "fresh_canonical"\n');
+		writeFileSync(join(root, "dirty-canonical.txt"), "dirty\n");
+
+		const result = await dispatch(
+			"add",
+			["--cwd", root, "--branch", "feature/from-explicit-base", "--base", "base/stacked", "--json"],
+			deps,
+		);
+
+		expect(result.exitCode).toBe(0);
+		expect(
+			(await run(["git", "-C", `${root}__feature--from-explicit-base`, "show", "HEAD:remote.txt"])).stdout,
+		).toBe("base/stacked\n");
+	});
+
 	test("uses --base for a new branch and warns when --base is ignored for existing branch", async () => {
 		const {root, remote} = await initRepoWithOrigin(tmp);
 		await createRemoteBranch(remote, "base/topic");
@@ -2201,7 +2219,7 @@ integrationDescribe("wktree pooled add", () => {
 		).toBe("origin default\n");
 	});
 
-	test("fresh_canonical validates canonical root before honoring pooled explicit base", async () => {
+	test("fresh_canonical pooled explicit base bypasses canonical update requirement", async () => {
 		const {root, remote} = await initRepoWithOrigin(tmp);
 		await createRemoteBranch(remote, "base/policy-check");
 		writeConfig(tmp, root, "echo ready", 1, '[project.add]\npolicy = "fresh_canonical"\n');
@@ -2209,13 +2227,19 @@ integrationDescribe("wktree pooled add", () => {
 
 		const result = await dispatch(
 			"add",
-			["--cwd", root, "--branch", "feature/pooled-base-block", "--base", "base/policy-check", "--json"],
+			["--cwd", root, "--branch", "feature/pooled-from-base", "--base", "base/policy-check", "--json"],
 			testDeps(),
 		);
 
-		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
-		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({kind: "blocked", reason: "dirty_canonical"});
-		expect(existsSync(`${root}__feat1`)).toBe(false);
+		expect(result.exitCode).toBe(0);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			kind: "ready",
+			worktree_path: `${root}__feat1`,
+			branch: "feature/pooled-from-base",
+		});
+		expect((await run(["git", "-C", `${root}__feat1`, "show", "HEAD:remote.txt"])).stdout).toBe(
+			"base/policy-check\n",
+		);
 	});
 
 	test("fresh_canonical policy failure does not recycle an occupied pooled slot", async () => {

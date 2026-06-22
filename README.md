@@ -125,7 +125,9 @@ Valid finish strategies are `ff_only`, `rebase_ff`, `squash`, and `merge_commit`
 Add policy values are:
 
 - `origin_default`: fetch `origin` and start new branches from `origin/<default>` without changing the canonical root.
-- `fresh_canonical`: fetch `origin`, require the canonical root to be clean and checked out on the default branch, fast-forward it, then start new branches from that fresh local default branch. If the root is dirty, on the wrong branch, or cannot fast-forward, `add` fails hard rather than falling back to stale canonical state.
+- `fresh_canonical`: fetch `origin`, require the canonical root to be clean and checked out on the default branch, fast-forward it, then start new branches without an explicit `--base` from that fresh local default branch. If the root is dirty, on the wrong branch, or cannot fast-forward, default-base `add` fails hard rather than falling back to stale canonical state.
+
+An explicit `--base` is treated as an intentional stacked/non-default base: `wktree` fetches first and resolves that base deterministically, but does not require or mutate the canonical default branch.
 
 `finish` integrates the current non-canonical worktree into the canonical default branch. It requires a clean source worktree, fetches first, requires a clean/fresh canonical target, and stops on conflicts. `--strategy` overrides config. `--push` does a normal non-forced push; rejection blocks cleanup. `--remove-worktree` removes a regular worktree or recycles a pooled slot after successful integration and push. `--delete-branch` requires removing/recycling the worktree in the same finish run.
 

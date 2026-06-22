@@ -48,6 +48,11 @@ Append notes here. Do not rewrite earlier notes.
 - Task 11 now uses finish-aware cleanup safety so local-only and squash-finished branches can be cleaned up after successful integration without weakening standalone `wktree remove` safety rules.
 - Finish cleanup flags are pinned as `--push`, `--remove-worktree`, and `--delete-branch`, and the spec command table was aligned.
 
+### Alignment fix-forward — 2026-06-22
+
+- After implementation review, `fresh_canonical` was clarified to enforce canonical default-branch freshness only for default-base adds. Explicit `--base` remains an intentional stacked/non-default workflow: it fetches and resolves deterministically without requiring or mutating the canonical default branch.
+- `finish --remove-worktree` cleanup now kills the tmux session for the source path, matching standalone recycle/remove cleanup expectations.
+
 ### Task plan review amendments — 2026-06-17
 
 - Task 1 now rejects any present `copy` field instead of accepting syntax that is not executable yet.

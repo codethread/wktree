@@ -217,14 +217,16 @@ root must be up to date first:
 
 | Policy | Contract |
 |---|---|
-| `fresh_canonical` | Fetch `origin`, require the canonical root to be clean and checked out on origin's default branch, fast-forward it to `origin/<default>`, then create new branches from the canonical default branch. Any failure blocks `add`. |
-| `origin_default` | Fetch `origin` and create new branches from `origin/<default>` without mutating the canonical root. This is the escape hatch for repositories that cannot reliably keep the canonical checkout clean or worktree-only. |
+| `fresh_canonical` | Fetch `origin`, require the canonical root to be clean and checked out on origin's default branch, fast-forward it to `origin/<default>`, then create new branches without an explicit `--base` from the canonical default branch. Any failure blocks default-base `add`. |
+| `origin_default` | Fetch `origin` and create new branches without an explicit `--base` from `origin/<default>` without mutating the canonical root. This is the escape hatch for repositories that cannot reliably keep the canonical checkout clean or worktree-only. |
 
-An explicit `--base` remains a user override, but freshness still applies to the selected base
-where meaningful: strict policies must fetch first and must not silently fall back to a stale
-local ref. Existing local or remote branches are checked out according to normal branch-state
-rules; if policy later governs remote fast-forward of existing branch worktrees, failures must
-be structured as either blocked or warning outcomes rather than stderr-only text.
+An explicit `--base` remains a user override for stacked or non-default work. It still fetches
+first and resolves the selected base deterministically, but it does not require or mutate the
+canonical default branch. Strict policies must not silently fall back to stale `HEAD` when the
+requested base cannot be resolved. Existing local or remote branches are checked out according
+to normal branch-state rules; if policy later governs remote fast-forward of existing branch
+worktrees, failures must be structured as either blocked or warning outcomes rather than
+stderr-only text.
 
 ### Finish lifecycle
 

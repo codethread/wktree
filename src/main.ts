@@ -1009,10 +1009,12 @@ async function cleanupFinishedWorktree(options: {
 		const placeholderBranch = `wk-pool/feat${slot.index}`;
 		await ensurePlaceholderBranch({git, root, branch: placeholderBranch, trunk: state.trunk});
 		await git.run(["-C", source.path, "checkout", "-B", placeholderBranch, `origin/${state.trunk}`]);
+		await killTmuxSessionForPath(source.path);
 		if (deleteBranch) await git.run(["-C", root, "branch", "-D", source.branch]);
 		return;
 	}
 	await git.run(["-C", root, "worktree", "remove", source.path]);
+	await killTmuxSessionForPath(source.path);
 	if (deleteBranch) await git.run(["-C", root, "branch", "-D", source.branch]);
 }
 
@@ -1185,13 +1187,13 @@ async function resolveDefaultBaseForNewBranch(options: {
 }): Promise<string | null> {
 	const {git, root, config, branchState, base} = options;
 	if (branchState !== "none") return null;
+	if (base) return base;
 	const policy = explainPolicy(config, root).addPolicy;
 	if (policy === "fresh_canonical") {
 		const defaultBranch = await detectOriginDefaultBranch(git, root);
 		await fastForwardCanonicalDefault(git, root, defaultBranch);
-		return base ?? defaultBranch;
+		return defaultBranch;
 	}
-	if (base) return base;
 	const defaultBranch = await detectOriginDefaultBranch(git, root);
 	return `origin/${defaultBranch}`;
 }
