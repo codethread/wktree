@@ -2,7 +2,7 @@
 
 ## Problem statement / MVP goal
 
-Implement the planned `wktree` lifecycle policy work now captured in `specs/git-worktrees.md`: config-driven add freshness, effective policy explanation, and a conservative `wktree finish` flow for integrating completed worktrees back into the canonical root.
+Implement the planned `wktree` lifecycle policy work now captured in `../../specs/git-worktrees.md`: config-driven add freshness, effective policy explanation, and a conservative `wktree finish` flow for integrating completed worktrees back into the canonical root.
 
 MVP completion means a user can set personal defaults such as `~/dev/projects/**` to `fresh_canonical`, keep escape-hatch repositories on `origin_default`, rely on `wktree add` to fail hard instead of building from stale canonical state, inspect effective policy with `wktree config explain`, and finish a clean non-canonical worktree with configured local strategy, optional push, and safe cleanup.
 
@@ -10,13 +10,13 @@ Tasks 1-5 in this plan are historical completed copy-setup tasks and should not 
 
 ## Important references
 
-- `specs/git-worktrees.md` — durable lifecycle contract, planned policy config, add freshness, finish semantics, commands, payloads, safety rules.
-- `specs/README.md` — spec index that must remain accurate as status changes.
-- `README.md` — user-facing command/config reference to update after implementation.
-- `src/` — TypeScript CLI/engine, config parsing, git execution, and lifecycle behavior.
-- `nu/wktree/` — Nushell wrapper behavior that runs returned post-create scripts and should stop owning add freshness directly.
-- `tests/` — existing Bun integration and smoke coverage patterns.
-- `AGENTS.md` — project-specific development and validation expectations.
+- `../../specs/git-worktrees.md` — durable lifecycle contract, planned policy config, add freshness, finish semantics, commands, payloads, safety rules.
+- `../../specs/README.md` — spec index that must remain accurate as status changes.
+- `../../../README.md` — user-facing command/config reference to update after implementation.
+- `../../../src/` — TypeScript CLI/engine, config parsing, git execution, and lifecycle behavior.
+- `../../../nu/wktree/` — Nushell wrapper behavior that runs returned post-create scripts and should stop owning add freshness directly.
+- `../../../tests/` — existing Bun integration and smoke coverage patterns.
+- `../../../AGENTS.md` — project-specific development and validation expectations.
 
 ## Task strategy
 
@@ -38,7 +38,7 @@ Append notes here. Do not rewrite earlier notes.
 
 ### Task plan amendment: lifecycle policy and finish — 2026-06-22
 
-- Added Tasks 6-12 to implement the newly planned policy config, strict add freshness, and conservative `wktree finish` flow from `specs/git-worktrees.md`.
+- Added Tasks 6-12 to implement the newly planned policy config, strict add freshness, and conservative `wktree finish` flow from `../../specs/git-worktrees.md`.
 - Existing Tasks 1-5 remain complete historical copy-setup work and should not be rewritten.
 - Active plan intentionally keeps daemon sync, auto-commit, force-push, PR/provider workflow, and automatic conflict resolution out of scope.
 

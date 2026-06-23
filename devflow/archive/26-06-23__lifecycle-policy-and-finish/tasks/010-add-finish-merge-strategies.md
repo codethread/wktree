@@ -36,5 +36,5 @@ Extend `wktree finish` beyond `ff_only` by implementing the remaining planned lo
 
 ## References
 
-- `specs/git-worktrees.md` sections: Finish lifecycle and Config.
+- `../../../specs/git-worktrees.md` sections: Finish lifecycle and Config.
 - Task 9 `wktree finish` command shape and safety checks.

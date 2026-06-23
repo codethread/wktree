@@ -41,6 +41,6 @@ Add the first usable `wktree finish` vertical slice: a conservative local `ff_on
 
 ## References
 
-- `specs/git-worktrees.md` sections: Finish lifecycle, Commands, Payloads, Config.
+- `../../../specs/git-worktrees.md` sections: Finish lifecycle, Commands, Payloads, Config.
 - Task 6 effective finish policy parsing.
 - Existing remove/recycle safety checks for source worktree cleanliness patterns.

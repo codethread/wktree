@@ -59,6 +59,14 @@ export function parseConfig(toml: string): TreesConfig {
 	const rules = rawRules.map((entry, index) => parseRuleConfig(entry, index));
 	const seenRoots = new Set<string>();
 	const projects = rawProjects.map((entry, index) => parseProjectConfig(entry, index, seenRoots));
+	for (const [index, project] of projects.entries()) {
+		const rawProject = rawProjects[index];
+		const needsCommand =
+			project.poolSize !== null || project.copy.length > 0 || (isRecord(rawProject) && rawProject.copy_mode_default !== undefined);
+		if (needsCommand && !resolveEffectiveCommand({projects, rules, defaults}, project.root).command) {
+			throw new ConfigError(`[[project]] root \`${project.root}\` requires an effective command for pooled or copy setup`);
+		}
+	}
 	return {projects, rules, defaults};
 }
 
@@ -69,7 +77,8 @@ function parseRuleConfig(entry: unknown, index: number): PolicyRule {
 		throw new ConfigError(`${label}: required field \`root_glob\` is missing or empty`);
 	}
 	const rootGlob = expandRootGlob(entry.root_glob, `${label}: root_glob`);
-	return {rootGlob, ...parsePolicyTables(entry, label)};
+	const command = parseOptionalCommand(entry.command, `${label}: command`);
+	return {rootGlob, command, ...parsePolicyTables(entry, label)};
 }
 
 function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string>): ProjectConfig {
@@ -88,14 +97,7 @@ function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string
 	}
 
 	const commandValue = entry.command;
-	const hasCommand = typeof commandValue === "string" && commandValue.trim() !== "";
-	const needsCommand = entry.pool_size !== undefined || entry.copy !== undefined || entry.copy_mode_default !== undefined;
-	if (!hasCommand && needsCommand) {
-		throw new ConfigError(`${label}: required field \`command\` is missing or empty`);
-	}
-	if (commandValue !== undefined && !hasCommand) {
-		throw new ConfigError(`${label}: optional field \`command\` must be a non-empty string when present`);
-	}
+	const command = parseOptionalCommand(commandValue, `${label}: command`);
 
 	const root = expandPath(rootValue);
 	if (seenRoots.has(root)) {
@@ -115,12 +117,20 @@ function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string
 	return {
 		name: nameValue ?? basename(root),
 		root,
-		command: hasCommand ? commandValue : null,
+		command,
 		poolSize,
 		copyModeDefault,
 		copy,
 		...parsePolicyTables(entry, label),
 	};
+}
+
+function parseOptionalCommand(value: unknown, label: string): string | null {
+	if (value === undefined) return null;
+	if (typeof value !== "string" || value.trim() === "") {
+		throw new ConfigError(`${label} must be a non-empty string when present`);
+	}
+	return value;
 }
 
 function parsePolicyTables(value: Record<string, unknown>, label: string) {
@@ -185,6 +195,24 @@ export function findProjectForRoot(config: TreesConfig, root: string): ProjectCo
 	return config.projects.find((candidate) => normalizeExistingPath(candidate.root) === comparableRoot);
 }
 
+export function resolveEffectiveCommand(config: TreesConfig, canonicalRoot: string) {
+	const root = normalizeExistingPath(canonicalRoot);
+	const project = findProjectForRoot(config, root);
+	let command: string | null = null;
+	let source: string | null = null;
+	for (const rule of config.rules) {
+		if (rule.command && rootGlobMatches(rule.rootGlob, root)) {
+			command = rule.command;
+			source = `rule:${rule.rootGlob}`;
+		}
+	}
+	if (project?.command) {
+		command = project.command;
+		source = `project:${project.root}`;
+	}
+	return {command, source};
+}
+
 export function explainPolicy(config: TreesConfig, canonicalRoot: string) {
 	const root = normalizeExistingPath(canonicalRoot);
 	const matchedRules = config.rules.filter((rule) => rootGlobMatches(rule.rootGlob, root));
@@ -197,7 +225,7 @@ export function explainPolicy(config: TreesConfig, canonicalRoot: string) {
 	}
 	if (project?.add?.policy) addPolicy = project.add.policy;
 	if (project?.finish) finishPolicy = {...finishPolicy, ...project.finish};
-	return {canonicalRoot: root, matchedRules, project, addPolicy, finishPolicy};
+	return {canonicalRoot: root, matchedRules, project, addPolicy, finishPolicy, command: resolveEffectiveCommand(config, root)};
 }
 
 export function normalizeExistingPath(path: string): string {

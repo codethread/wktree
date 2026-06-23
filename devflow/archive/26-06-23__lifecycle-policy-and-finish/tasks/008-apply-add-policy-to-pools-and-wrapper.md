@@ -37,6 +37,6 @@ Extend add policy enforcement to pooled allocation paths and remove wrapper-owne
 
 ## References
 
-- `specs/git-worktrees.md` sections: Add freshness policy, Pool semantics, Bootstrap.
+- `../../../specs/git-worktrees.md` sections: Add freshness policy, Pool semantics, Bootstrap.
 - `README.md` Nushell wrapper section.
 - `AGENTS.md` Nushell validation commands.

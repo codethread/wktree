@@ -47,5 +47,5 @@ Implement the first complete copy behavior for string entries such as `copy = ["
 
 ## References
 
-- `specs/git-worktrees.md` sections: Copy setup, Structured output rules, Payloads.
+- `../../../specs/git-worktrees.md` sections: Copy setup, Structured output rules, Payloads.
 - Existing tests around real temporary git repositories and config helpers.

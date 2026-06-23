@@ -24,6 +24,7 @@ import {basename, dirname, join, resolve} from "node:path";
 import {
 	explainPolicy,
 	findProjectForRoot,
+	resolveEffectiveCommand,
 	normalizeExistingPath,
 	readConfig,
 	resolveCopySource,
@@ -81,7 +82,7 @@ import type {
 	Worktree,
 } from "./types.ts";
 
-export {explainPolicy, parseConfig} from "./config.ts";
+export {explainPolicy, parseConfig, resolveEffectiveCommand} from "./config.ts";
 export {LiveHookRunner} from "./hooks.ts";
 export {
 	BlockedError,
@@ -206,7 +207,7 @@ async function listCommand(args: string[], deps: Deps) {
 	const config = readConfig();
 	const canonicalRoot = await resolveCanonicalRoot(machineDeps.git, cwd);
 	const project = findProjectForRoot(config, canonicalRoot);
-	if (project?.poolSize) await ensurePool(project, machineDeps);
+	if (project?.poolSize) await ensurePool(project, machineDeps, undefined, config);
 	const worktrees = await listWorktrees(machineDeps.git, cwd);
 	if (output.json) return {stdout: `${JSON.stringify(worktrees.map(toListJson), null, 2)}\n`, exitCode: 0};
 	return {stdout: formatWorktreeList(worktrees), exitCode: 0};
@@ -243,6 +244,7 @@ async function addCommand(args: string[], deps: Deps) {
 		const canonicalRoot = await resolveCanonicalRoot(machineDeps.git, cwd);
 		const config = readConfig();
 		const project = findProjectForRoot(config, canonicalRoot);
+		const effectiveCommand = resolveEffectiveCommand(config, canonicalRoot);
 		if (slotPath && !project?.poolSize) {
 			throw new UsageError("--slot is only valid for pooled projects");
 		}
@@ -257,6 +259,7 @@ async function addCommand(args: string[], deps: Deps) {
 				output,
 				base,
 				force: opts.force === true,
+				command: effectiveCommand.command,
 			});
 		}
 
@@ -316,8 +319,15 @@ async function addCommand(args: string[], deps: Deps) {
 			throw error;
 		}
 
-		const postCreateScriptPath = project?.command
-			? writePostCreateScript({project, root: canonicalRoot, created: worktreePath, branch, pooled: false})
+		const postCreateScriptPath = effectiveCommand.command
+			? writePostCreateScript({
+					projectName: project?.name ?? basename(canonicalRoot),
+					command: effectiveCommand.command,
+					root: canonicalRoot,
+					created: worktreePath,
+					branch,
+					pooled: false,
+				})
 			: null;
 		const plan: AddPlan = {
 			worktreePath,
@@ -346,8 +356,9 @@ async function addPooledWorktree(options: {
 	output: OutputMode;
 	base: string | null;
 	force: boolean;
+	command: string | null;
 }): Promise<CommandResult> {
-	const {deps, project, config, root, branch, slotPath, output, base, force} = options;
+	const {deps, project, config, root, branch, slotPath, output, base, force, command} = options;
 	let worktrees = await listWorktrees(deps.git, root);
 	for (const worktree of worktrees) {
 		if (worktree.branch === branch) {
@@ -370,7 +381,7 @@ async function addPooledWorktree(options: {
 		if (blocked) return blocked;
 		throw error;
 	}
-	await ensurePool(project, deps, worktrees);
+	await ensurePool(project, deps, worktrees, config, command);
 	worktrees = await listWorktrees(deps.git, root);
 	for (const worktree of worktrees) {
 		if (worktree.branch === branch) {
@@ -392,7 +403,7 @@ async function addPooledWorktree(options: {
 			targetSlot = state.slots.find((candidate) => candidate.index === selected.index) ?? targetSlot;
 		}
 		return finalizeStructuredResult(
-			await allocatePooledSlot({deps, project, root, slot: targetSlot, branch, branchState, base: base ?? defaultBase}),
+			await allocatePooledSlot({deps, project, root, slot: targetSlot, branch, branchState, base: base ?? defaultBase, command}),
 			output,
 		);
 	}
@@ -402,7 +413,7 @@ async function addPooledWorktree(options: {
 	);
 	if (slot) {
 		return finalizeStructuredResult(
-			await allocatePooledSlot({deps, project, root, slot, branch, branchState, base: base ?? defaultBase}),
+			await allocatePooledSlot({deps, project, root, slot, branch, branchState, base: base ?? defaultBase, command}),
 			output,
 		);
 	}
@@ -425,7 +436,7 @@ async function addPooledWorktree(options: {
 	const recycled = state.slots.find((candidate) => candidate.index === selected.index);
 	if (!recycled) throw new WktreeError(`pool slot disappeared after recycle: ${selected.path}`);
 	return finalizeStructuredResult(
-		await allocatePooledSlot({deps, project, root, slot: recycled, branch, branchState, base: base ?? defaultBase}),
+		await allocatePooledSlot({deps, project, root, slot: recycled, branch, branchState, base: base ?? defaultBase, command}),
 		output,
 	);
 }
@@ -438,8 +449,9 @@ async function allocatePooledSlot(options: {
 	branch: string;
 	branchState: BranchState;
 	base: string | null;
+	command: string | null;
 }): Promise<ReadyAddPayload> {
-	const {deps, project, root, slot, branch, branchState, base} = options;
+	const {deps, project, root, slot, branch, branchState, base, command} = options;
 	const originalBranchHead = await captureExistingBranchHead({git: deps.git, root, branch, branchState});
 	await checkoutBranchInSlot({
 		git: deps.git,
@@ -456,9 +468,10 @@ async function allocatePooledSlot(options: {
 		await rollbackPooledAllocation({git: deps.git, root, slot, branch, branchState, originalBranchHead});
 		throw error;
 	}
-	if (!project.command) throw new ConfigError(`project ${project.name ?? project.root} requires command for pooled setup`);
+	if (!command) throw new ConfigError(`project ${project.name ?? project.root} requires command for pooled setup`);
 	const postCreateScriptPath = writePostCreateScript({
-		project,
+		projectName: project.name ?? basename(root),
+		command,
 		root,
 		created: slot.path,
 		branch,
@@ -545,8 +558,9 @@ async function ensureCommand(args: string[], deps: Deps) {
 	const worktrees = await listWorktrees(deps.git, cwd);
 	const canonical = worktrees.find((worktree) => worktree.canonical);
 	if (!canonical) throw new WktreeError("couldn't determine canonical worktree");
-	const project = findProjectForRoot(readConfig(), canonical.path);
-	if (project?.poolSize) await ensurePool(project, deps, worktrees);
+	const config = readConfig();
+	const project = findProjectForRoot(config, canonical.path);
+	if (project?.poolSize) await ensurePool(project, deps, worktrees, config);
 	return {exitCode: 0};
 }
 
@@ -871,7 +885,7 @@ async function configCommand(args: string[], deps: Deps) {
 	const matchedRules = payload.matched_rules.map((rule) => rule.root_glob).join(", ") || "(none)";
 	const project = payload.project ? `${payload.project.name ?? "(unnamed)"} ${payload.project.root}` : "(none)";
 	return {
-		stdout: `root: ${payload.root}\nmatched_rules: ${matchedRules}\nproject: ${project}\nadd.policy: ${payload.add.policy}\nfinish.enabled: ${payload.finish.enabled}\nfinish.strategy: ${payload.finish.strategy}\nfinish.push: ${payload.finish.push}\nfinish.remove_worktree: ${payload.finish.remove_worktree}\nfinish.delete_branch: ${payload.finish.delete_branch}\n`,
+		stdout: `root: ${payload.root}\nmatched_rules: ${matchedRules}\nproject: ${project}\ncommand.source: ${formatCommandSource(payload.command.source)}\nadd.policy: ${payload.add.policy}\nfinish.enabled: ${payload.finish.enabled}\nfinish.strategy: ${payload.finish.strategy}\nfinish.push: ${payload.finish.push}\nfinish.remove_worktree: ${payload.finish.remove_worktree}\nfinish.delete_branch: ${payload.finish.delete_branch}\n`,
 		exitCode: EXIT_CODES.SUCCESS,
 	};
 }
@@ -884,6 +898,10 @@ function toConfigExplainPayload(explanation: ReturnType<typeof explainPolicy>) {
 		project: explanation.project
 			? {name: explanation.project.name, root: explanation.project.root}
 			: null,
+		command: {
+			source: explanation.command.source,
+			value: explanation.command.command,
+		},
 		add: {policy: explanation.addPolicy},
 		finish: {
 			enabled: explanation.finishPolicy.enabled,
@@ -893,6 +911,10 @@ function toConfigExplainPayload(explanation: ReturnType<typeof explainPolicy>) {
 			delete_branch: explanation.finishPolicy.deleteBranch,
 		},
 	};
+}
+
+function formatCommandSource(source: string | null): string {
+	return source ?? "(none)";
 }
 
 async function captureExistingBranchHead(options: {
@@ -1028,11 +1050,14 @@ async function ensurePool(
 	project: ProjectConfig,
 	deps: Deps,
 	initialWorktrees?: Worktree[],
+	config: TreesConfig = readConfig(),
+	resolvedCommand?: string | null,
 ): Promise<PoolState> {
 	if (!project.poolSize) {
 		return {root: normalizeExistingPath(project.root), trunk: "", size: 0, slots: []};
 	}
 	const root = normalizeExistingPath(project.root);
+	const command = resolvedCommand ?? resolveEffectiveCommand(config, root).command;
 	let worktrees = initialWorktrees ?? (await listWorktrees(deps.git, root));
 	let state = await buildPoolState(project, worktrees, deps.git);
 	const needsWork = state.slots.some((slot) => !slot.exists || !slot.initialized);
@@ -1046,9 +1071,10 @@ async function ensurePool(
 		await ensurePlaceholderBranch({git: deps.git, root, branch, trunk: state.trunk});
 		const createdWorktree = !slot.exists;
 		if (createdWorktree) await deps.git.run(["-C", root, "worktree", "add", slot.path, branch]);
-		if (!project.command) throw new ConfigError(`project ${project.name ?? project.root} requires command for pooled setup`);
+		if (!command) throw new ConfigError(`project ${project.name ?? project.root} requires command for pooled setup`);
 		const postCreateScriptPath = writePostCreateScript({
-			project,
+			projectName: project.name ?? basename(root),
+			command,
 			root,
 			created: slot.path,
 			branch,
@@ -1384,24 +1410,24 @@ async function mergeOriginIfPresent(options: {
 }
 
 function writePostCreateScript(options: {
-	project: ProjectConfig;
+	projectName: string;
+	command: string;
 	root: string;
 	created: string;
 	branch: string;
 	pooled: boolean;
 }): string {
-	const {project, root, created, pooled} = options;
-	if (!project.command) throw new ConfigError(`project ${project.name ?? project.root} requires command for post-create script`);
+	const {projectName, command, root, created, pooled} = options;
 	const session = sessionNameForWorktreePath(created);
 	const sessionDir = mkdtempSync(join(tmpdir(), `${session}.wktree.`));
 	const postCreateScriptPath = resolve(sessionDir, "post-create.sh");
 	writeFileSync(
 		postCreateScriptPath,
 		generatePostCreateScript({
-			projectName: project.name ?? basename(root),
+			projectName,
 			root,
 			created,
-			command: project.command,
+			command,
 			pooled,
 		}),
 		{mode: 0o755},

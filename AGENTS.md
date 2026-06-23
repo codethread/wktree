@@ -7,8 +7,8 @@
 Read first:
 
 - [`README.md`](./README.md) — usage, layout, commands.
-- [`specs/git-worktrees.md`](./specs/git-worktrees.md) — durable contract and design decisions.
-- [`specs/README.md`](./specs/README.md) — spec index.
+- [`devflow/specs/git-worktrees.md`](./devflow/specs/git-worktrees.md) — durable contract and design decisions.
+- [`devflow/specs/README.md`](./devflow/specs/README.md) — spec index.
 
 ## Commands
 
@@ -75,4 +75,4 @@ Avoid trying to mock Bun's `$` operator or global process state. Wrap the effect
 
 ## Documentation expectations
 
-If command semantics, payload shapes, pool behavior, or safety rules change, update `specs/git-worktrees.md` in the same change. If setup or common usage changes, update `README.md` too.
+If command semantics, payload shapes, pool behavior, or safety rules change, update `devflow/specs/git-worktrees.md` in the same change. If setup or common usage changes, update `README.md` too.

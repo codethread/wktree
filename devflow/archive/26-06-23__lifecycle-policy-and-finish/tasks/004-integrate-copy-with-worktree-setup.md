@@ -40,6 +40,6 @@ Run the completed copy setup path before project bootstrap commands in normal wo
 
 ## References
 
-- `specs/git-worktrees.md` sections: Bootstrap, Copy setup, Pool semantics.
+- `../../../specs/git-worktrees.md` sections: Bootstrap, Copy setup, Pool semantics.
 - Existing tests for non-pooled add, pooled add, and ensure rollback behavior.
 - `nu/wktree/` wrapper behavior that runs returned post-create scripts.

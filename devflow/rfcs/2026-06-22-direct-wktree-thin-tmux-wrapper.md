@@ -4,7 +4,7 @@
 **Created:** 2026-06-22
 **Last Updated:** 2026-06-22
 **Driver:** Unknown
-**Related:** [`../git-worktrees.md`](../git-worktrees.md), [`../../README.md`](../../README.md), [`../../nu/wktree/mod.nu`](../../nu/wktree/mod.nu), [`../../nu/wktree/tmux.nu`](../../nu/wktree/tmux.nu), [`../../src/main.ts`](../../src/main.ts), [`../../src/hooks.ts`](../../src/hooks.ts)
+**Related:** [`../specs/git-worktrees.md`](../specs/git-worktrees.md), [`../../README.md`](../../README.md), [`../../nu/wktree/mod.nu`](../../nu/wktree/mod.nu), [`../../nu/wktree/tmux.nu`](../../nu/wktree/tmux.nu), [`../../src/main.ts`](../../src/main.ts), [`../../src/hooks.ts`](../../src/hooks.ts)
 
 ## 1. Summary
 

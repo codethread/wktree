@@ -45,5 +45,5 @@ Extend the copy engine from root-relative file strings to the full configured un
 
 ## References
 
-- `specs/git-worktrees.md` sections: Copy setup and Config.
+- `../../../specs/git-worktrees.md` sections: Copy setup and Config.
 - Existing filesystem helper patterns in tests.

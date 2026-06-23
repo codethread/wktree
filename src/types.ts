@@ -28,6 +28,7 @@ export interface ProjectConfig extends PolicyTables {
 
 export interface PolicyRule extends PolicyTables {
 	rootGlob: string;
+	command: string | null;
 }
 
 export type CopyMode = "copy" | "symlink";

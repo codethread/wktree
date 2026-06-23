@@ -34,6 +34,7 @@ import {
 	LiveHookRunner,
 	PickerCancelled,
 	parseConfig,
+	resolveEffectiveCommand,
 } from "../src/main";
 
 const integrationDescribe = process.env.WKTREE_SKIP_INTEGRATION === "1" ? describe.skip : describe;
@@ -253,6 +254,7 @@ shell = "nu"
 		const config = parseConfig(`
 [[rule]]
 root_glob = "/tmp/**"
+command = "echo first"
 [rule.add]
 policy = "fresh_canonical"
 [rule.finish]
@@ -261,6 +263,7 @@ push = true
 
 [[rule]]
 root_glob = "/tmp/repo"
+command = "echo second"
 [rule.finish]
 push = false
 remove_worktree = true
@@ -269,6 +272,41 @@ remove_worktree = true
 		expect(policy.matchedRules.map((rule) => rule.rootGlob)).toEqual(["/tmp/**", "/tmp/repo"]);
 		expect(policy.addPolicy).toBe("fresh_canonical");
 		expect(policy.finishPolicy).toMatchObject({strategy: "squash", push: false, removeWorktree: true});
+		expect(resolveEffectiveCommand(config, "/tmp/repo")).toEqual({
+			command: "echo second",
+			source: "rule:/tmp/repo",
+		});
+	});
+
+	test("exact project command overrides inherited rule command", () => {
+		const config = parseConfig(`
+[[rule]]
+root_glob = "/tmp/**"
+command = "echo rule"
+
+[[project]]
+root = "/tmp/repo"
+command = "echo project"
+`);
+		expect(resolveEffectiveCommand(config, "/tmp/repo")).toEqual({
+			command: "echo project",
+			source: "project:/tmp/repo",
+		});
+	});
+
+	test("inherited rule command satisfies pooled and copy setup requirement", () => {
+		const config = parseConfig(`
+[[rule]]
+root_glob = "/tmp/**"
+command = "echo inherited"
+
+[[project]]
+root = "/tmp/repo"
+pool_size = 1
+copy = [".env"]
+`);
+		expect(config.projects[0]?.command).toBeNull();
+		expect(resolveEffectiveCommand(config, "/tmp/repo").command).toBe("echo inherited");
 	});
 
 	test.each([
@@ -566,6 +604,24 @@ integrationDescribe("wktree non-pool add", () => {
 		await run(["bash", plan.post_create_script_path]);
 		await run(["bash", plan.post_create_script_path]);
 		expect(readFileSync(join(worktreePath, "hook-sentinel"), "utf8")).toBe("hook\n");
+	});
+
+	test("uses inherited rule command for a repo without exact project config", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		const configHome = join(tmp, "config-rule-command");
+		mkdirSync(join(configHome, "ct-worktrees"), {recursive: true});
+		writeFileSync(
+			join(configHome, "ct-worktrees", "trees.toml"),
+			`[[rule]]\nroot_glob = "${realpathSync(tmp)}/**"\ncommand = '''\necho inherited > "$WK_CREATED/rule-sentinel"\n'''\n`,
+		);
+		process.env.XDG_CONFIG_HOME = configHome;
+
+		const result = await dispatch("add", ["--cwd", root, "--branch", "feature/rule-command", "--json"], deps);
+		const plan = JSON.parse(result.stdout ?? "{}");
+		await run(["bash", plan.post_create_script_path]);
+
+		expect(plan.post_create_script_path).toEndWith("/post-create.sh");
+		expect(readFileSync(join(`${root}__feature--rule-command`, "rule-sentinel"), "utf8")).toBe("inherited\n");
 	});
 
 	test("copies configured files before returning the post-create script", async () => {
@@ -2084,6 +2140,7 @@ integrationDescribe("wktree read-only commands", () => {
 			root,
 			matched_rules: [{root_glob: `${realpathSync(tmp)}/**`}],
 			project: {name: "repo", root},
+			command: {source: null, value: null},
 			add: {policy: "fresh_canonical"},
 			finish: {
 				enabled: true,

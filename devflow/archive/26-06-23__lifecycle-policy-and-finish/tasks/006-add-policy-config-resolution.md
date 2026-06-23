@@ -9,7 +9,7 @@ Add the planned policy configuration model without changing `wktree add` or intr
 ## Must implement exactly
 
 - Preserve all existing `[[project]]` config behavior for bootstrap, pools, copy setup, and existing callers.
-- Add parsing for `[defaults.add]`, `[defaults.finish]`, `[[rule]]`, `[rule.add]`, `[rule.finish]`, `[project.add]`, and `[project.finish]` according to `specs/git-worktrees.md`.
+- Add parsing for `[defaults.add]`, `[defaults.finish]`, `[[rule]]`, `[rule.add]`, `[rule.finish]`, `[project.add]`, and `[project.finish]` according to `../../../specs/git-worktrees.md`.
 - Support only leading `~` expansion for `root_glob`; do not add environment variable or shell expansion.
 - Resolve effective policy in this order: built-in defaults, matching rules in file order with later matching fields winning, then exact `[[project]]` overrides.
 - Use built-in add policy `origin_default` when no config overrides it.
@@ -42,6 +42,6 @@ Add the planned policy configuration model without changing `wktree add` or intr
 
 ## References
 
-- `specs/git-worktrees.md` sections: Policy configuration, Add freshness policy, Finish lifecycle, Commands, Config.
+- `../../../specs/git-worktrees.md` sections: Policy configuration, Add freshness policy, Finish lifecycle, Commands, Config.
 - `README.md` CLI quick reference and project configuration sections.
 - `AGENTS.md` structured output and validation guidance.

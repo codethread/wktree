@@ -2,7 +2,7 @@
 
 Deterministic local worktree manager for creating, reusing, inspecting, and removing git worktrees. `wktree` centralizes git/worktree lifecycle behavior so humans, Nushell wrappers, tmux workflows, and agents all use the same command contract.
 
-See [`specs/git-worktrees.md`](./specs/git-worktrees.md) for the durable design contract and edge-case semantics.
+See [`devflow/specs/git-worktrees.md`](./devflow/specs/git-worktrees.md) for the durable design contract and edge-case semantics.
 
 ## What it provides
 
@@ -24,7 +24,7 @@ See [`specs/git-worktrees.md`](./specs/git-worktrees.md) for the durable design 
 - `nu/wktree/` — Nushell wrapper and tmux workflow integration.
 - `tests/` — Bun tests for engine and wrapper behavior.
 - `scripts/build-bin.ts` — builds the `~/.local/bin/wktree` wrapper.
-- `specs/` — persistent product/design specifications.
+- `devflow/specs/` — persistent product/design specifications.
 
 ## Development
 
@@ -80,9 +80,9 @@ Import `nu/wktree/mod.nu` to get the human-facing commands:
 
 ## Project configuration
 
-Project config is read from `ct-worktrees/trees.toml` under XDG config home. Projects can define `name`, `root`, optional `command`, optional `pool_size`, optional `copy` entries, and policy overrides. `command` is required when a project uses pools or copy/bootstrap setup, but policy-only exact projects may omit it. Use `wktree config explain --cwd <path> [--json]` to inspect the effective policy.
+Project config is read from `ct-worktrees/trees.toml` under XDG config home. Projects can define `name`, `root`, optional `command`, optional `pool_size`, optional `copy` entries, and policy overrides. Rules can define inherited default `command`s for matching roots. `command` is required when a project uses pools or copy/bootstrap setup, but it may come from either the exact project or a matching rule. Policy-only exact projects may omit it. Use `wktree config explain --cwd <path> [--json]` to inspect the effective policy and bootstrap command source.
 
-Policy resolution starts with built-in defaults, applies matching `[[rule]]` entries in file order, then applies exact `[[project]]` overrides. Finish policy fields merge field-by-field.
+Resolution starts with built-in defaults, applies matching `[[rule]]` entries in file order, then applies exact `[[project]]` overrides. Finish policy fields merge field-by-field. For inherited commands, later matching rule commands win and exact project commands override rules.
 
 ```toml
 [defaults.add]
@@ -97,6 +97,17 @@ delete_branch = false
 
 [[rule]]
 root_glob = "~/dev/projects/**"
+command = '''
+if [[ -f bun.lock ]]; then
+  bun install
+elif [[ -f yarn.lock ]]; then
+  yarn install
+elif [[ -f pnpm-lock.yaml ]]; then
+  pnpm install
+else
+  echo "wktree: no known JS lockfile found; skipping install"
+fi
+'''
 
 [rule.add]
 policy = "fresh_canonical"

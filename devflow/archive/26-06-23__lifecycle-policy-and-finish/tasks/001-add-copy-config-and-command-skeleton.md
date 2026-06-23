@@ -35,5 +35,5 @@ Add the public command skeleton for copy setup without accepting copy entries or
 
 ## References
 
-- `specs/git-worktrees.md` sections: Copy setup, Commands, Payloads, Config.
+- `../../../specs/git-worktrees.md` sections: Copy setup, Commands, Payloads, Config.
 - `AGENTS.md` command and structured output guidance.

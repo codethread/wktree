@@ -82,10 +82,11 @@ config, and optional per-repository pool slots; tmux is a consumer, not a databa
   - **Rationale:** Falling back to an old canonical checkout hides the real problem and
     can cause humans or agents to build, test, or diff against a misleading root worktree.
     Repositories that cannot support strict worktree development must opt into a looser policy.
-- **Decision:** Root-glob rules are policy selectors, not a general inheritance language.
-  - **Rationale:** Personal defaults such as `~/dev/projects/**` are useful, but policy
-    resolution should remain explainable: defaults are refined by ordered matching rules and
-    exact project entries, with no conditionals or broad shell expansion.
+- **Decision:** Root-glob rules are selectors for explainable defaults, not a general inheritance language.
+  - **Rationale:** Personal defaults such as `~/dev/projects/**` are useful for policy and
+    bootstrap commands, but resolution should remain explainable: defaults are refined by ordered
+    matching rules and exact project entries. Command bodies stay opaque Bash; `wktree` does not
+    parse TOML conditionals or perform broad shell expansion.
 - **Decision:** `finish` is a conservative worktree lifecycle operation, not a general Git
   automation daemon.
   - **Rationale:** Integrating a completed branch into the canonical root is the natural
@@ -199,17 +200,19 @@ run.
 
 ### Policy configuration
 
-Policy configuration describes default behavior for repositories that may not need bootstrap
-commands or pools. It is resolved from three layers:
+Policy and inherited bootstrap command configuration describes default behavior for repositories
+that may not need exact project entries. It is resolved from three layers:
 
 1. built-in defaults;
 2. matching `[[rule]]` entries, evaluated in file order with later matching fields winning;
 3. an exact `[[project]]` entry for the canonical root, whose fields win over rules.
 
 Rules match canonical root paths with an explicit `root_glob`. Glob matching is only for root
-selection; copy paths keep their stricter no-glob contract. Exact project entries remain the
-place for bootstrap commands, pools, and copy setup, but they may also exist only to override
-policy for an exceptional repository.
+selection; copy paths keep their stricter no-glob contract. Rules may provide an optional
+bootstrap `command`; matching rule commands are evaluated in file order with later commands
+winning. Exact project entries remain the place for pools and copy setup, and exact project
+commands override inherited rule commands. Exact projects may also exist only to override policy
+or command defaults for an exceptional repository.
 
 ### Add freshness policy
 
@@ -399,6 +402,10 @@ canonical root:
   "root": "/repo",
   "matched_rules": [{ "root_glob": "~/dev/projects/**" }],
   "project": { "name": "example", "root": "/repo" },
+  "command": {
+    "source": "rule:~/dev/projects/**",
+    "value": "bun install"
+  },
   "add": { "policy": "fresh_canonical" },
   "finish": {
     "enabled": true,
@@ -443,7 +450,7 @@ Implemented exact project fields:
 | Field               | Required                                   | Purpose                                                                                                                            |
 | ------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `root`              | yes                                        | Canonical root worktree path.                                                                                                      |
-| `command`           | when using pools, copy, or bootstrap setup | Bootstrap command run as the post-create script. Policy-only exact projects may omit it; absent commands emit no bootstrap script. |
+| `command`           | when no matching rule command exists and using pools, copy, or bootstrap setup | Bootstrap command run as the post-create script. Policy-only exact projects may omit it; absent effective commands emit no bootstrap script. |
 | `name`              | no                                         | Project identifier; defaults to the basename of `root`.                                                                            |
 | `pool_size`         | no                                         | Enables pooled mode with this many fixed slots.                                                                                    |
 | `copy_mode_default` | no                                         | `copy` or `symlink`; defaults to `copy` and applies to all copy entries unless overridden.                                         |
@@ -456,6 +463,7 @@ Policy fields:
 | `[defaults.add].policy` | global defaults | Fallback add policy when no rule or project overrides it.                                                                           |
 | `[defaults.finish]`     | global defaults | Fallback finish policy when no rule or project overrides it: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`. |
 | `[[rule]].root_glob`    | rule            | Canonical root glob to match, with leading `~` expansion only.                                                                      |
+| `[[rule]].command`      | rule            | Optional inherited Bash bootstrap command for matching roots; later matching rule commands win.                                     |
 | `[rule.add].policy`     | rule            | Add policy for matching roots.                                                                                                      |
 | `[rule.finish]`         | rule            | Finish policy for matching roots: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`.                            |
 | `[project.add].policy`  | exact project   | Exact-root add policy override.                                                                                                     |
@@ -478,6 +486,17 @@ delete_branch = false
 
 [[rule]]
 root_glob = "~/dev/projects/**"
+command = '''
+if [[ -f bun.lock ]]; then
+  bun install
+elif [[ -f yarn.lock ]]; then
+  yarn install
+elif [[ -f pnpm-lock.yaml ]]; then
+  pnpm install
+else
+  echo "wktree: no known JS lockfile found; skipping install"
+fi
+'''
 
 [rule.add]
 policy = "fresh_canonical"

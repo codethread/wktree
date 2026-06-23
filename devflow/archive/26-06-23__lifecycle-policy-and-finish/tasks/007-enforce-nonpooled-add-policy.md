@@ -43,6 +43,6 @@ Apply the effective add policy from Task 6 to ordinary non-pooled `wktree add` f
 
 ## References
 
-- `specs/git-worktrees.md` sections: Add freshness policy, Safety invariants, Payloads.
+- `../../../specs/git-worktrees.md` sections: Add freshness policy, Safety invariants, Payloads.
 - Task 6 effective policy model.
 - Existing add behavior and rollback tests in `tests/`.

@@ -38,6 +38,6 @@ Add configured and flag-driven post-integration actions for `wktree finish`: pus
 
 ## References
 
-- `specs/git-worktrees.md` sections: Finish lifecycle, Safety invariants, Pool semantics, Payloads.
+- `../../../specs/git-worktrees.md` sections: Finish lifecycle, Safety invariants, Pool semantics, Payloads.
 - Existing `remove` and `recycle` behavior.
 - Task 10 finish strategy behavior.

@@ -16,7 +16,7 @@ Update user-facing documentation and final validation for the implemented copy s
   - copy runs before the configured command
 - Update the CLI quick reference to include `wktree copy --cwd <path> [--json]`.
 - Add or update an example TOML snippet that demonstrates `.env` and the skill-directory multi-target example.
-- Review `specs/git-worktrees.md` against the final implementation. Change the document-level status back to `Implemented` only if the entire spec now matches implementation reality; otherwise leave it unchanged and make any copy-specific status/wording accurate without overstating unrelated areas.
+- Review `../../../specs/git-worktrees.md` against the final implementation. Change the document-level status back to `Implemented` only if the entire spec now matches implementation reality; otherwise leave it unchanged and make any copy-specific status/wording accurate without overstating unrelated areas.
 - Keep docs concise and avoid implementation-plan details.
 
 ## Done when
@@ -37,5 +37,5 @@ Update user-facing documentation and final validation for the implemented copy s
 ## References
 
 - `README.md` project configuration and CLI quick reference sections.
-- `specs/git-worktrees.md`.
+- `../../../specs/git-worktrees.md`.
 - `AGENTS.md` validation commands.
