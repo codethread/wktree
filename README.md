@@ -72,10 +72,11 @@ Import `nu/wktree/mod.nu` to get the human-facing commands:
 - `wk add <branch> [base] [--self] [--force]`
 - `wk remove <branch> | wk remove --self [--force]`
 - `wk copy [--json]`
+- `wk finish [--json] [--strategy <strategy>] [--push] [--remove-worktree] [--delete-branch]`
 - `wk list [--json]`
 - `wk switch`
 
-`wk add` delegates freshness policy to the TypeScript engine, runs any returned post-create script, and then opens or switches to the emitted tmux session/path. The wrapper does not expose a `finish` shortcut; use `wktree finish` directly when integrating a completed worktree.
+`wk add` delegates freshness policy to the TypeScript engine, runs any returned post-create script, and then opens or switches to the emitted tmux session/path. `wk remove` and cleanup-enabled `wk finish` close wrapper-owned tmux sessions after successful engine operations.
 
 ## Project configuration
 
