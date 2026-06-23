@@ -51,7 +51,7 @@ Append notes here. Do not rewrite earlier notes.
 ### Alignment fix-forward — 2026-06-22
 
 - After implementation review, `fresh_canonical` was clarified to enforce canonical default-branch freshness only for default-base adds. Explicit `--base` remains an intentional stacked/non-default workflow: it fetches and resolves deterministically without requiring or mutating the canonical default branch.
-- `finish --remove-worktree` cleanup now kills the tmux session for the source path, matching standalone recycle/remove cleanup expectations.
+- Tmux session cleanup remains wrapper-owned; `finish --remove-worktree` only removes or recycles git worktree state and emits structured path/session metadata for adapters.
 
 ### Task plan review amendments — 2026-06-17
 

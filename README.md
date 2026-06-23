@@ -11,7 +11,7 @@ See [`specs/git-worktrees.md`](./specs/git-worktrees.md) for the durable design 
 - Optional fixed-size per-repository worktree pools for expensive projects.
 - Structured JSON outcomes for machine consumers.
 - Human-facing Nushell commands that open/switch tmux sessions.
-- No durable app database: state is reconstructed from git metadata, filesystem paths, project config, and live tmux panes.
+- No durable app database: engine state is reconstructed from git metadata, filesystem paths, and project config; live tmux panes are wrapper-only UI state.
 
 ## Repository layout
 

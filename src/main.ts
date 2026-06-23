@@ -974,10 +974,7 @@ async function recycleSlot(options: {
 		await git.run(["-C", slot.path, "checkout", "-f", "-B", placeholderBranch, `origin/${state.trunk}`]);
 		await git.run(["-C", slot.path, "reset", "--hard", placeholderBranch]);
 		await git.run(["-C", slot.path, "clean", "-fd"]);
-		if (oldBranch && oldBranch !== placeholderBranch) {
-			if (!keepBranch) await git.run(["-C", root, "branch", "-D", oldBranch]);
-			await killTmuxSessionForPath(slot.path);
-		}
+		if (oldBranch && oldBranch !== placeholderBranch && !keepBranch) await git.run(["-C", root, "branch", "-D", oldBranch]);
 		return;
 	}
 
@@ -985,10 +982,7 @@ async function recycleSlot(options: {
 	if (dirty) throw new DirtySlotError(`slot ${slot.path} has uncommitted changes; pass --force to recycle`);
 	if (oldBranch && oldBranch !== placeholderBranch) await assertBranchHasMergedUpstream(git, root, oldBranch);
 	await git.run(["-C", slot.path, "checkout", "-B", placeholderBranch, `origin/${state.trunk}`]);
-	if (oldBranch && oldBranch !== placeholderBranch) {
-		if (!keepBranch) await git.run(["-C", root, "branch", "-d", oldBranch]);
-		await killTmuxSessionForPath(slot.path);
-	}
+	if (oldBranch && oldBranch !== placeholderBranch && !keepBranch) await git.run(["-C", root, "branch", "-d", oldBranch]);
 }
 
 async function cleanupFinishedWorktree(options: {
@@ -1009,12 +1003,10 @@ async function cleanupFinishedWorktree(options: {
 		const placeholderBranch = `wk-pool/feat${slot.index}`;
 		await ensurePlaceholderBranch({git, root, branch: placeholderBranch, trunk: state.trunk});
 		await git.run(["-C", source.path, "checkout", "-B", placeholderBranch, `origin/${state.trunk}`]);
-		await killTmuxSessionForPath(source.path);
 		if (deleteBranch) await git.run(["-C", root, "branch", "-D", source.branch]);
 		return;
 	}
 	await git.run(["-C", root, "worktree", "remove", source.path]);
-	await killTmuxSessionForPath(source.path);
 	if (deleteBranch) await git.run(["-C", root, "branch", "-D", source.branch]);
 }
 
@@ -1533,14 +1525,6 @@ function toSessionInfo(worktreePath: string): SessionInfo {
 		name: sessionNameForWorktreePath(worktreePath),
 		path: worktreePath,
 	};
-}
-
-async function killTmuxSessionForPath(worktreePath: string): Promise<void> {
-	const proc = Bun.spawn(["tmux", "kill-session", "-t", `=${sessionNameForWorktreePath(worktreePath)}`], {
-		stdout: "ignore",
-		stderr: "ignore",
-	});
-	await proc.exited.catch(() => undefined);
 }
 
 async function listWorktrees(git: GitRunner, cwd: string): Promise<Worktree[]> {

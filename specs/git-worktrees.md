@@ -71,8 +71,9 @@ config, and optional per-repository pool slots; tmux is a consumer, not a databa
     overwrite tracked paths prevents accidental modification of versioned project files, while an
     idempotent fenced exclude block prevents noisy status output and duplicate rules.
 - **Decision:** Fresh parsing over synchronized caches.
-  - **Rationale:** Git worktree metadata, filesystem paths, project config, and live tmux
-    state are cheap enough to inspect directly, removing cache-invalidation bugs.
+  - **Rationale:** Git worktree metadata, filesystem paths, and project config are cheap
+    enough for the engine to inspect directly. Tmux state is wrapper-only UI state and
+    must not affect engine correctness.
 - **Decision:** Add-time freshness policy belongs in the engine, not only in shell wrappers.
   - **Rationale:** Humans and agents should get the same safety guarantees. If a repository
     requires new work to start from an up-to-date canonical default branch, that invariant
@@ -215,10 +216,10 @@ policy for an exceptional repository.
 `add` policy controls how a new branch chooses its starting point and whether the canonical
 root must be up to date first:
 
-| Policy | Contract |
-|---|---|
+| Policy            | Contract                                                                                                                                                                                                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `fresh_canonical` | Fetch `origin`, require the canonical root to be clean and checked out on origin's default branch, fast-forward it to `origin/<default>`, then create new branches without an explicit `--base` from the canonical default branch. Any failure blocks default-base `add`. |
-| `origin_default` | Fetch `origin` and create new branches without an explicit `--base` from `origin/<default>` without mutating the canonical root. This is the escape hatch for repositories that cannot reliably keep the canonical checkout clean or worktree-only. |
+| `origin_default`  | Fetch `origin` and create new branches without an explicit `--base` from `origin/<default>` without mutating the canonical root. This is the escape hatch for repositories that cannot reliably keep the canonical checkout clean or worktree-only.                       |
 
 An explicit `--base` remains a user override for stacked or non-default work. It still fetches
 first and resolves the selected base deterministically, but it does not require or mutate the
@@ -245,12 +246,12 @@ policy. It is intentionally conservative:
 
 Supported strategies mirror common forge merge choices while preserving local determinism:
 
-| Strategy | Contract |
-|---|---|
-| `ff_only` | Move the target only if it can fast-forward to the source branch. |
-| `rebase_ff` | Rebase the source onto the target, then fast-forward the target. |
-| `squash` | Apply the source branch changes onto the target as one new commit. |
-| `merge_commit` | Merge the source into the target with an explicit merge commit. |
+| Strategy       | Contract                                                           |
+| -------------- | ------------------------------------------------------------------ |
+| `ff_only`      | Move the target only if it can fast-forward to the source branch.  |
+| `rebase_ff`    | Rebase the source onto the target, then fast-forward the target.   |
+| `squash`       | Apply the source branch changes onto the target as one new commit. |
+| `merge_commit` | Merge the source into the target with an explicit merge commit.    |
 
 `finish` may optionally push the target branch, delete the finished branch, and remove or recycle
 the worktree after successful integration. Push rejection is a blocking result, not a reason to
@@ -264,18 +265,18 @@ integration. Standalone `remove`/`recycle` keep their upstream-merge safety rule
 
 ### Commands
 
-| Command | Purpose |
-|---|---|
-| `wktree root --cwd <path>` | Print canonical worktree root. |
-| `wktree list --cwd <path> [--json]` | List worktrees and initialize configured pools. |
-| `wktree path --cwd <path> --branch <branch>` | Print the worktree path for a branch. |
-| `wktree add --cwd <path> --branch <branch> [--json] [--slot <path>] [--base <branch>] [--force]` | Create or allocate a worktree. |
-| `wktree remove --cwd <path> (--branch <branch> \| --self <path>) [--json] [--force]` | Remove or recycle a worktree. |
-| `wktree ensure --cwd <path>` | Materialize configured pool slots. |
-| `wktree status --cwd <path>` | Print pool status JSON. |
-| `wktree recycle --cwd <path> --slot <path> [--force]` | Recycle a pooled slot. |
-| `wktree copy --cwd <path> [--json]` | Re-run configured copy setup for the non-canonical worktree containing `cwd`. |
-| `wktree config explain --cwd <path> [--json]` | Show the effective policy after defaults, matching rules, and exact project overrides. |
+| Command                                                                                                                                    | Purpose                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wktree root --cwd <path>`                                                                                                                 | Print canonical worktree root.                                                                                                                                   |
+| `wktree list --cwd <path> [--json]`                                                                                                        | List worktrees and initialize configured pools.                                                                                                                  |
+| `wktree path --cwd <path> --branch <branch>`                                                                                               | Print the worktree path for a branch.                                                                                                                            |
+| `wktree add --cwd <path> --branch <branch> [--json] [--slot <path>] [--base <branch>] [--force]`                                           | Create or allocate a worktree.                                                                                                                                   |
+| `wktree remove --cwd <path> (--branch <branch> \| --self <path>) [--json] [--force]`                                                       | Remove or recycle a worktree.                                                                                                                                    |
+| `wktree ensure --cwd <path>`                                                                                                               | Materialize configured pool slots.                                                                                                                               |
+| `wktree status --cwd <path>`                                                                                                               | Print pool status JSON.                                                                                                                                          |
+| `wktree recycle --cwd <path> --slot <path> [--force]`                                                                                      | Recycle a pooled slot.                                                                                                                                           |
+| `wktree copy --cwd <path> [--json]`                                                                                                        | Re-run configured copy setup for the non-canonical worktree containing `cwd`.                                                                                    |
+| `wktree config explain --cwd <path> [--json]`                                                                                              | Show the effective policy after defaults, matching rules, and exact project overrides.                                                                           |
 | `wktree finish --cwd <path> [--json] [--strategy ff_only\|rebase_ff\|squash\|merge_commit] [--push] [--remove-worktree] [--delete-branch]` | Integrate a completed worktree into the canonical root, optionally push the target branch, then remove/recycle the source worktree and delete the source branch. |
 
 ### Structured output rules
@@ -286,14 +287,14 @@ integration. Standalone `remove`/`recycle` keep their upstream-merge safety rule
 
 ### Exit codes
 
-| Code | Meaning |
-|---|---|
-| `0` | success / ready |
-| `10` | blocked / recoverable state |
-| `11` | unsafe operation refused without force |
-| `12` | usage or config error |
-| `130` | cancelled |
-| `1` | unexpected runtime or hook failure |
+| Code  | Meaning                                |
+| ----- | -------------------------------------- |
+| `0`   | success / ready                        |
+| `10`  | blocked / recoverable state            |
+| `11`  | unsafe operation refused without force |
+| `12`  | usage or config error                  |
+| `130` | cancelled                              |
+| `1`   | unexpected runtime or hook failure     |
 
 ### Payloads
 
@@ -371,9 +372,17 @@ are unsafe refusals with exit code `11`; with `--json`, they emit a blocked payl
   "root": "/repo",
   "worktree_path": "/repo__feature--foo",
   "copied": [
-    {"from": "/repo/.env", "to": ".env", "type": "file"},
-    {"from": "/Users/me/my/repo/skill-dir", "to": ".claude/skills/skill-dir", "type": "directory"},
-    {"from": "/Users/me/secrets/app.env", "to": ".env.shared", "type": "symlink"}
+    { "from": "/repo/.env", "to": ".env", "type": "file" },
+    {
+      "from": "/Users/me/my/repo/skill-dir",
+      "to": ".claude/skills/skill-dir",
+      "type": "directory"
+    },
+    {
+      "from": "/Users/me/secrets/app.env",
+      "to": ".env.shared",
+      "type": "symlink"
+    }
   ],
   "exclude_paths": [".env", ".claude/skills/skill-dir"]
 }
@@ -388,9 +397,9 @@ canonical root:
 {
   "kind": "config_explain",
   "root": "/repo",
-  "matched_rules": [{"root_glob": "~/dev/projects/**"}],
-  "project": {"name": "example", "root": "/repo"},
-  "add": {"policy": "fresh_canonical"},
+  "matched_rules": [{ "root_glob": "~/dev/projects/**" }],
+  "project": { "name": "example", "root": "/repo" },
+  "add": { "policy": "fresh_canonical" },
   "finish": {
     "enabled": true,
     "strategy": "ff_only",
@@ -431,26 +440,26 @@ requiring bootstrap setup.
 
 Implemented exact project fields:
 
-| Field | Required | Purpose |
-|---|---|---|
-| `root` | yes | Canonical root worktree path. |
-| `command` | when using pools, copy, or bootstrap setup | Bootstrap command run as the post-create script. Policy-only exact projects may omit it; absent commands emit no bootstrap script. |
-| `name` | no | Project identifier; defaults to the basename of `root`. |
-| `pool_size` | no | Enables pooled mode with this many fixed slots. |
-| `copy_mode_default` | no | `copy` or `symlink`; defaults to `copy` and applies to all copy entries unless overridden. |
-| `copy` | no | Files or directories to copy or symlink into created worktrees before `command` runs. |
+| Field               | Required                                   | Purpose                                                                                                                            |
+| ------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `root`              | yes                                        | Canonical root worktree path.                                                                                                      |
+| `command`           | when using pools, copy, or bootstrap setup | Bootstrap command run as the post-create script. Policy-only exact projects may omit it; absent commands emit no bootstrap script. |
+| `name`              | no                                         | Project identifier; defaults to the basename of `root`.                                                                            |
+| `pool_size`         | no                                         | Enables pooled mode with this many fixed slots.                                                                                    |
+| `copy_mode_default` | no                                         | `copy` or `symlink`; defaults to `copy` and applies to all copy entries unless overridden.                                         |
+| `copy`              | no                                         | Files or directories to copy or symlink into created worktrees before `command` runs.                                              |
 
 Policy fields:
 
-| Field | Scope | Purpose |
-|---|---|---|
-| `[defaults.add].policy` | global defaults | Fallback add policy when no rule or project overrides it. |
-| `[defaults.finish]` | global defaults | Fallback finish policy when no rule or project overrides it: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`. |
-| `[[rule]].root_glob` | rule | Canonical root glob to match, with leading `~` expansion only. |
-| `[rule.add].policy` | rule | Add policy for matching roots. |
-| `[rule.finish]` | rule | Finish policy for matching roots: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`. |
-| `[project.add].policy` | exact project | Exact-root add policy override. |
-| `[project.finish]` | exact project | Exact-root finish policy override: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`. |
+| Field                   | Scope           | Purpose                                                                                                                             |
+| ----------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `[defaults.add].policy` | global defaults | Fallback add policy when no rule or project overrides it.                                                                           |
+| `[defaults.finish]`     | global defaults | Fallback finish policy when no rule or project overrides it: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`. |
+| `[[rule]].root_glob`    | rule            | Canonical root glob to match, with leading `~` expansion only.                                                                      |
+| `[rule.add].policy`     | rule            | Add policy for matching roots.                                                                                                      |
+| `[rule.finish]`         | rule            | Finish policy for matching roots: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`.                            |
+| `[project.add].policy`  | exact project   | Exact-root add policy override.                                                                                                     |
+| `[project.finish]`      | exact project   | Exact-root finish policy override: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`.                           |
 
 Bootstrap scripts run under bash with `WK_ROOT` and `WK_CREATED` exported (see §3).
 

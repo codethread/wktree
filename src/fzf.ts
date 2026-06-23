@@ -1,7 +1,6 @@
 // Provides a fuzzy-finder function for interactive selection of strings using fzf
 interface Options {
 	multi?: boolean;
-	tmux?: boolean;
 	header?: string;
 	preview?: string;
 	withNth?: string;
@@ -16,7 +15,6 @@ export async function fzf<Opts extends Options>(
 		if (!value || flag === "tty") return [];
 		const cliFlag = flag.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
 		if (typeof value === "string") return [`--${cliFlag}`, value];
-		if (flag === "tmux") return ["--tmux"];
 		return [`--${flag}`];
 	});
 
