@@ -52,6 +52,7 @@ export interface Slot {
 export interface PoolState {
 	root: string;
 	trunk: string;
+	hasPool: boolean;
 	size: number;
 	slots: Slot[];
 }

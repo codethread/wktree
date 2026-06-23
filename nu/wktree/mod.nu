@@ -273,18 +273,9 @@ export def --env "wk remove" [
 # Finish the current non-canonical worktree, then close wrapper-owned tmux sessions when cleanup removes or recycles it.
 export def "wk finish" [
     --json                        # return structured JSON/table data instead of status text
-    --strategy: string            # override configured finish strategy
-    --push                        # push target branch after successful integration
-    --remove-worktree             # remove or recycle the source worktree after successful integration
-    --delete-branch               # delete the source branch after successful worktree cleanup
 ] {
     let outcome = (wktree-outcome {||
-        let args = [finish --cwd $env.PWD --json]
-        let args = if $strategy != null { $args | append [--strategy $strategy] | flatten } else { $args }
-        let args = if $push { $args | append "--push" } else { $args }
-        let args = if $remove_worktree { $args | append "--remove-worktree" } else { $args }
-        let args = if $delete_branch { $args | append "--delete-branch" } else { $args }
-        ^wktree ...$args
+        ^wktree finish --cwd $env.PWD --json
     })
 
     if $outcome.payload == null {

@@ -1056,7 +1056,7 @@ integrationDescribe("wktree finish", () => {
 		});
 		const sourceHead = (await run(["git", "-C", worktreePath, "rev-parse", "HEAD"])).stdout.trim();
 
-		const result = await dispatch("finish", ["--cwd", worktreePath, "--json", "--strategy", "ff_only"], deps);
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
 
 		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
 		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
@@ -1194,32 +1194,35 @@ integrationDescribe("wktree finish", () => {
 		).not.toBe(0);
 	});
 
-	test("explicit finish cleanup flags enable push, removal, and branch deletion", async () => {
+	test("configured finish cleanup enables push, removal, and branch deletion", async () => {
 		const {root, remote} = await initRepoWithOrigin(tmp);
-		writeConfig(tmp, root, "echo ready");
-		await dispatch("add", ["--cwd", root, "--branch", "feature/flag-cleanup", "--json"], deps);
-		const worktreePath = `${root}__feature--flag-cleanup`;
+		writeConfig(
+			tmp,
+			root,
+			"echo ready",
+			undefined,
+			"[project.finish]\npush = true\nremove_worktree = true\ndelete_branch = true\n",
+		);
+		await dispatch("add", ["--cwd", root, "--branch", "feature/policy-cleanup", "--json"], deps);
+		const worktreePath = `${root}__feature--policy-cleanup`;
 		await commitFile({
 			repo: worktreePath,
-			path: "flag-cleanup.txt",
-			content: "flags\n",
-			message: "flag cleanup",
+			path: "policy-cleanup.txt",
+			content: "policy\n",
+			message: "policy cleanup",
 		});
 
-		const result = await dispatch(
-			"finish",
-			["--cwd", worktreePath, "--json", "--push", "--remove-worktree", "--delete-branch"],
-			deps,
-		);
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
 
 		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
 		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
 			cleanup_actions: ["push", "remove_worktree", "delete_branch"],
 		});
-		expect((await run(["git", "-C", remote, "show", "main:flag-cleanup.txt"])).stdout).toBe("flags\n");
+		expect((await run(["git", "-C", remote, "show", "main:policy-cleanup.txt"])).stdout).toBe("policy\n");
 		expect(existsSync(worktreePath)).toBe(false);
 		expect(
-			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/flag-cleanup"])).exitCode,
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/policy-cleanup"]))
+				.exitCode,
 		).not.toBe(0);
 	});
 
@@ -1343,14 +1346,14 @@ integrationDescribe("wktree finish", () => {
 		expect(existsSync(worktreePath)).toBe(true);
 	});
 
-	test("invalid CLI strategy fails before fresh_canonical mutates target", async () => {
+	test("finish rejects CLI policy overrides before fresh_canonical mutates target", async () => {
 		const {root, remote} = await initRepoWithOrigin(tmp);
 		writeConfig(tmp, root, "echo ready", undefined, '[project.add]\npolicy = "fresh_canonical"\n');
-		await dispatch("add", ["--cwd", root, "--branch", "feature/bad-strategy", "--json"], deps);
-		const worktreePath = `${root}__feature--bad-strategy`;
+		await dispatch("add", ["--cwd", root, "--branch", "feature/cli-policy-override", "--json"], deps);
+		const worktreePath = `${root}__feature--cli-policy-override`;
 		await commitFile({
 			repo: worktreePath,
-			path: "bad-strategy.txt",
+			path: "cli-policy-override.txt",
 			content: "source\n",
 			message: "source work",
 		});
@@ -1363,30 +1366,30 @@ integrationDescribe("wktree finish", () => {
 		const originalHead = (await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim();
 
 		await expect(
-			dispatch("finish", ["--cwd", worktreePath, "--json", "--strategy", "bad"], deps),
-		).rejects.toThrow("--strategy must be ff_only");
+			dispatch("finish", ["--cwd", worktreePath, "--json", "--strategy", "ff_only"], deps),
+		).rejects.toThrow("unknown option --strategy");
 		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(originalHead);
 	});
 
-	test("explicit CLI strategy overrides configured finish strategy", async () => {
+	test("configured finish strategy is not overridden by CLI", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeConfig(tmp, root, "echo ready", undefined, '[project.finish]\nstrategy = "squash"\n');
-		await dispatch("add", ["--cwd", root, "--branch", "feature/strategy-override", "--json"], deps);
-		const worktreePath = `${root}__feature--strategy-override`;
+		await dispatch("add", ["--cwd", root, "--branch", "feature/configured-strategy", "--json"], deps);
+		const worktreePath = `${root}__feature--configured-strategy`;
 		await commitFile({
 			repo: worktreePath,
-			path: "override.txt",
-			content: "override\n",
-			message: "override work",
+			path: "configured.txt",
+			content: "configured\n",
+			message: "configured work",
 		});
-		const sourceHead = (await run(["git", "-C", worktreePath, "rev-parse", "HEAD"])).stdout.trim();
 
-		const result = await dispatch("finish", ["--cwd", worktreePath, "--json", "--strategy", "ff_only"], deps);
+		const result = await dispatch("finish", ["--cwd", worktreePath, "--json"], deps);
 
 		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
-		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({strategy: "ff_only"});
-		expect((await run(["git", "-C", root, "rev-parse", "HEAD"])).stdout.trim()).toBe(sourceHead);
-		expect((await run(["git", "-C", root, "log", "-1", "--format=%s"])).stdout.trim()).toBe("override work");
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({strategy: "squash"});
+		expect((await run(["git", "-C", root, "log", "-1", "--format=%s"])).stdout.trim()).toBe(
+			"finish: feature/configured-strategy",
+		);
 	});
 
 	test("fresh_canonical conflict refuses without first fast-forwarding target", async () => {
@@ -2018,7 +2021,7 @@ integrationDescribe("wktree pool status", () => {
 			new LiveGitRunner(),
 		);
 
-		expect(state).toMatchObject({root, trunk: "main", size: 2});
+		expect(state).toMatchObject({root, trunk: "main", hasPool: true, size: 2});
 		expect(state.slots.map((slot) => ({exists: slot.exists, initialized: slot.initialized}))).toEqual([
 			{exists: false, initialized: false},
 			{exists: false, initialized: false},
@@ -2039,6 +2042,7 @@ integrationDescribe("wktree pool status", () => {
 
 		expect(state.root).toBe(root);
 		expect(state.trunk).toBe("main");
+		expect(state.hasPool).toBe(true);
 		expect(state.slots[0]).toMatchObject({
 			index: 1,
 			exists: true,
@@ -2082,7 +2086,7 @@ integrationDescribe("wktree pool status", () => {
 
 		writeConfig(tmp, root, "echo ready");
 		const nonPooled = JSON.parse((await dispatch("status", ["--cwd", root], deps)).stdout ?? "{}");
-		expect(nonPooled).toEqual({root, trunk: null, size: 0, slots: []});
+		expect(nonPooled).toEqual({root, trunk: null, hasPool: false, size: 0, slots: []});
 	});
 });
 
@@ -2654,7 +2658,7 @@ integrationDescribe("wktree pooled add", () => {
 	});
 });
 
-integrationDescribe("wktree recycle", () => {
+integrationDescribe("pooled wktree remove", () => {
 	let tmp: string;
 	let originalConfigHome: string | undefined;
 
@@ -2669,7 +2673,7 @@ integrationDescribe("wktree recycle", () => {
 		rmSync(tmp, {recursive: true, force: true});
 	});
 
-	test("safe recycle resets slot to placeholder and remove delegates with removed false", async () => {
+	test("safe pooled remove resets slot to placeholder with removed false", async () => {
 		const {root, remote} = await initRepoWithOrigin(tmp);
 		await createRemoteBranch(remote, "feature/safe");
 		writeConfig(tmp, root, "echo ready", 1);
@@ -2714,9 +2718,9 @@ integrationDescribe("wktree recycle", () => {
 		await dispatch("add", ["--cwd", root, "--branch", "feature/dirty", "--json"], testDeps());
 		writeFileSync(join(`${root}__feat1`, "dirty.txt"), "dirty\n");
 
-		await expect(
-			dispatch("recycle", ["--cwd", root, "--slot", `${root}__feat1`], testDeps()),
-		).rejects.toThrow("uncommitted changes");
+		await expect(dispatch("remove", ["--cwd", root, "--self", `${root}__feat1`], testDeps())).rejects.toThrow(
+			"uncommitted changes",
+		);
 
 		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
 			"feature/dirty",
@@ -2724,7 +2728,7 @@ integrationDescribe("wktree recycle", () => {
 		expect(existsSync(join(`${root}__feat1`, "dirty.txt"))).toBe(true);
 	});
 
-	test("forced recycle discards tracked and untracked dirt but preserves gitignored node_modules", async () => {
+	test("forced pooled remove discards tracked and untracked dirt but preserves gitignored node_modules", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeFileSync(join(root, ".gitignore"), "node_modules/\n");
 		await run(["git", "-C", root, "add", ".gitignore"]);
@@ -2739,7 +2743,7 @@ integrationDescribe("wktree recycle", () => {
 		mkdirSync(join(`${root}__feat1`, "node_modules"));
 		writeFileSync(join(`${root}__feat1`, "node_modules", "keep.txt"), "keep\n");
 
-		await dispatch("recycle", ["--cwd", root, "--slot", `${root}__feat1`, "--force"], testDeps());
+		await dispatch("remove", ["--cwd", root, "--self", `${root}__feat1`, "--force"], testDeps());
 
 		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
 			"wk-pool/feat1",
@@ -2753,14 +2757,14 @@ integrationDescribe("wktree recycle", () => {
 		).not.toBe(0);
 	});
 
-	test("missing or unmerged upstream blocks safe recycle", async () => {
+	test("missing or unmerged upstream blocks safe pooled remove", async () => {
 		const {root, remote} = await initRepoWithOrigin(tmp);
 		await createRemoteBranch(remote, "feature/upstream-blocked");
 		writeConfig(tmp, root, "echo ready", 1);
 		await dispatch("add", ["--cwd", root, "--branch", "feature/upstream-blocked", "--json"], testDeps());
-		await expect(
-			dispatch("recycle", ["--cwd", root, "--slot", `${root}__feat1`], testDeps()),
-		).rejects.toThrow("no upstream");
+		await expect(dispatch("remove", ["--cwd", root, "--self", `${root}__feat1`], testDeps())).rejects.toThrow(
+			"no upstream",
+		);
 		await run([
 			"git",
 			"-C",
@@ -2774,9 +2778,9 @@ integrationDescribe("wktree recycle", () => {
 		await run(["git", "-C", `${root}__feat1`, "add", "ahead.txt"]);
 		await run(["git", "-C", `${root}__feat1`, "commit", "-m", "ahead"]);
 
-		await expect(
-			dispatch("recycle", ["--cwd", root, "--slot", `${root}__feat1`], testDeps()),
-		).rejects.toThrow("not merged");
+		await expect(dispatch("remove", ["--cwd", root, "--self", `${root}__feat1`], testDeps())).rejects.toThrow(
+			"not merged",
+		);
 		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
 			"feature/upstream-blocked",
 		);

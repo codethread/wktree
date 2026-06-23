@@ -132,10 +132,9 @@ Subcommands:
   list      List worktrees
   path      Print worktree path for branch
   add       Add or allocate a worktree
-  remove    Remove or recycle a worktree
+  remove    Remove a worktree or free a pooled slot
   ensure    Materialise pooled worktree slots
   status    Print pool status JSON
-  recycle   Recycle a pooled slot
   copy      Re-run configured copy setup
   config    Inspect effective configuration
   finish    Integrate a completed worktree into the canonical root
@@ -178,8 +177,6 @@ export async function dispatch(
 			return statusCommand(args, deps);
 		case "ensure":
 			return ensureCommand(args, deps);
-		case "recycle":
-			return recycleCommand(args, deps);
 		case "copy":
 			return copyCommand(args, deps);
 		case "config":
@@ -573,7 +570,7 @@ async function statusCommand(args: string[], deps: Deps) {
 	const project = findProjectForRoot(readConfig(), canonical.path);
 	if (!project?.poolSize) {
 		return {
-			stdout: `${JSON.stringify({root: canonical.path, trunk: null, size: 0, slots: []}, null, 2)}\n`,
+			stdout: `${JSON.stringify({root: canonical.path, trunk: null, hasPool: false, size: 0, slots: []}, null, 2)}\n`,
 			exitCode: 0,
 		};
 	}
@@ -599,7 +596,7 @@ export async function buildPoolState(
 			}),
 		),
 	);
-	return {root, trunk, size: cfg.poolSize, slots};
+	return {root, trunk, hasPool: true, size: cfg.poolSize, slots};
 }
 
 async function buildPoolSlotState(options: {
@@ -714,18 +711,6 @@ async function removeCommand(args: string[], deps: Deps) {
 	}
 }
 
-async function recycleCommand(args: string[], deps: Deps) {
-	const opts = parseOptions(args);
-	const cwd = requireOption(opts, "cwd");
-	const slotPath = requireOption(opts, "slot");
-	const force = opts.force === true;
-	const root = await resolveCanonicalRoot(deps.git, cwd);
-	const project = findProjectForRoot(readConfig(), root);
-	if (!project?.poolSize) throw new UsageError("recycle requires a pooled project");
-	await recycleSlot({git: deps.git, project, root, slotPath, force, keepBranch: false});
-	return {exitCode: 0};
-}
-
 async function copyCommand(args: string[], deps: Deps) {
 	const opts = parseOptions(args);
 	const cwd = requireOption(opts, "cwd");
@@ -768,7 +753,9 @@ async function finishCommand(args: string[], deps: Deps) {
 	const opts = parseOptions(args);
 	const cwd = requireOption(opts, "cwd");
 	const output = parseOutputMode(opts);
-	const requestedStrategy = typeof opts.strategy === "string" ? opts.strategy : null;
+	for (const key of Object.keys(opts)) {
+		if (key !== "cwd" && key !== "json") throw new UsageError(`unknown option --${key}`);
+	}
 	const machineDeps = withMachineJsonProgress(deps, output);
 	let sourceBranch: string | undefined;
 	let worktreePath: string | undefined;
@@ -791,10 +778,10 @@ async function finishCommand(args: string[], deps: Deps) {
 		const explanation = explainPolicy(config, canonical.path);
 		const finishPolicy = explanation.finishPolicy;
 		if (!finishPolicy.enabled) throw new BlockedError("finish is disabled for this repository");
-		const strategy = parseFinishStrategy(requestedStrategy ?? finishPolicy.strategy);
-		const push = finishPolicy.push || opts.push === true;
-		const removeWorktree = finishPolicy.removeWorktree || opts["remove-worktree"] === true;
-		const deleteBranch = finishPolicy.deleteBranch || opts["delete-branch"] === true;
+		const strategy = finishPolicy.strategy;
+		const push = finishPolicy.push;
+		const removeWorktree = finishPolicy.removeWorktree;
+		const deleteBranch = finishPolicy.deleteBranch;
 		if (deleteBranch && !removeWorktree) {
 			throw new UnsafeOperationError(
 				"cannot delete source branch while its worktree remains checked out; enable remove_worktree cleanup",
@@ -1054,7 +1041,7 @@ async function ensurePool(
 	resolvedCommand?: string | null,
 ): Promise<PoolState> {
 	if (!project.poolSize) {
-		return {root: normalizeExistingPath(project.root), trunk: "", size: 0, slots: []};
+		return {root: normalizeExistingPath(project.root), trunk: "", hasPool: false, size: 0, slots: []};
 	}
 	const root = normalizeExistingPath(project.root);
 	const command = resolvedCommand ?? resolveEffectiveCommand(config, root).command;
@@ -1138,14 +1125,7 @@ function parseOptions(args: string[]) {
 	const opts: Record<string, string | boolean> = {};
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
-		if (
-			arg === "--json" ||
-			arg === "--force" ||
-			arg === "--keep-branch" ||
-			arg === "--push" ||
-			arg === "--remove-worktree" ||
-			arg === "--delete-branch"
-		) {
+		if (arg === "--json" || arg === "--force" || arg === "--keep-branch") {
 			opts[arg.slice(2)] = true;
 			continue;
 		}
@@ -1214,11 +1194,6 @@ async function resolveDefaultBaseForNewBranch(options: {
 	}
 	const defaultBranch = await detectOriginDefaultBranch(git, root);
 	return `origin/${defaultBranch}`;
-}
-
-function parseFinishStrategy(value: string): FinishStrategy {
-	if (value === "ff_only" || value === "squash" || value === "merge_commit" || value === "rebase_ff") return value;
-	throw new UsageError("--strategy must be ff_only, rebase_ff, squash, or merge_commit");
 }
 
 async function assertSourceCanFastForwardTarget(options: {

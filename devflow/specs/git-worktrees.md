@@ -130,8 +130,8 @@ Missing tmux sessions are normal and reconstructable, never an error.
 ### Pool semantics
 
 A project with `pool_size` uses fixed reusable slots. Pooled mode changes command-visible
-behavior across `path`, `add`, `remove`, `list`, `ensure`, `status`, and `recycle`, and
-introduces the `pool_full` outcome.
+behavior across `path`, `add`, `remove`, `list`, `ensure`, and `status`, and introduces
+the `pool_full` outcome.
 
 - Slot path `<root>__featN`; placeholder branch `wk-pool/featN`; initialized marker
   `wk-pool-initialized` in git metadata.
@@ -243,8 +243,7 @@ policy. It is intentionally conservative:
 - require the target/canonical checkout to be clean and up to date according to the active add
   freshness policy;
 - never force-push;
-- do not remove or recycle the source worktree unless integration and any configured push both
-  succeed;
+- do not clean up the source worktree unless integration and any configured push both succeed;
 - stop on conflicts and leave resolution to the user.
 
 Supported strategies mirror common forge merge choices while preserving local determinism:
@@ -256,31 +255,33 @@ Supported strategies mirror common forge merge choices while preserving local de
 | `squash`       | Apply the source branch changes onto the target as one new commit. |
 | `merge_commit` | Merge the source into the target with an explicit merge commit.    |
 
-`finish` may optionally push the target branch, delete the finished branch, and remove or recycle
-the worktree after successful integration. Push rejection is a blocking result, not a reason to
-retry with force. Cleanup uses finish-aware safety: once a configured strategy has successfully
-integrated the source changes into the target, the source branch/worktree may be cleaned up even
-when the source branch is local-only or was squash-finished. Branch deletion requires removing or
-recycling the source worktree in the same `finish` invocation; otherwise finish blocks before
-integration. Standalone `remove`/`recycle` keep their upstream-merge safety rules.
+`finish` may optionally push the target branch, delete the finished branch, and clean up the
+worktree after successful integration when enabled by effective finish policy. Push rejection
+is a blocking result, not a reason to retry with force. Cleanup uses finish-aware safety: once a
+configured strategy has successfully integrated the source changes into the target, the source
+branch/worktree may be cleaned up even when the source branch is local-only or was squash-finished.
+Branch deletion requires cleaning up the source worktree in the same effective finish policy;
+otherwise finish blocks before integration. Standalone `remove` keeps its upstream-merge safety
+rules.
 
 ## 4. Interfaces
 
 ### Commands
 
-| Command                                                                                                                                    | Purpose                                                                                                                                                          |
-| ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wktree root --cwd <path>`                                                                                                                 | Print canonical worktree root.                                                                                                                                   |
-| `wktree list --cwd <path> [--json]`                                                                                                        | List worktrees and initialize configured pools.                                                                                                                  |
-| `wktree path --cwd <path> --branch <branch>`                                                                                               | Print the worktree path for a branch.                                                                                                                            |
-| `wktree add --cwd <path> --branch <branch> [--json] [--slot <path>] [--base <branch>] [--force]`                                           | Create or allocate a worktree.                                                                                                                                   |
-| `wktree remove --cwd <path> (--branch <branch> \| --self <path>) [--json] [--force]`                                                       | Remove or recycle a worktree.                                                                                                                                    |
-| `wktree ensure --cwd <path>`                                                                                                               | Materialize configured pool slots.                                                                                                                               |
-| `wktree status --cwd <path>`                                                                                                               | Print pool status JSON.                                                                                                                                          |
-| `wktree recycle --cwd <path> --slot <path> [--force]`                                                                                      | Recycle a pooled slot.                                                                                                                                           |
-| `wktree copy --cwd <path> [--json]`                                                                                                        | Re-run configured copy setup for the non-canonical worktree containing `cwd`.                                                                                    |
-| `wktree config explain --cwd <path> [--json]`                                                                                              | Show the effective policy after defaults, matching rules, and exact project overrides.                                                                           |
-| `wktree finish --cwd <path> [--json] [--strategy ff_only\|rebase_ff\|squash\|merge_commit] [--push] [--remove-worktree] [--delete-branch]` | Integrate a completed worktree into the canonical root, optionally push the target branch, then remove/recycle the source worktree and delete the source branch. |
+| Command                                                                                                                                   | Purpose                                                                                                                                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wktree [--cwd <path>] root`                                                                                                               | Print canonical worktree root.                                                                                                                                  |
+| `wktree [--cwd <path>] list [--json]`                                                                                                      | List worktrees and initialize configured pools.                                                                                                                 |
+| `wktree [--cwd <path>] path --branch <branch>`                                                                                             | Print the worktree path for a branch.                                                                                                                           |
+| `wktree [--cwd <path>] add --branch <branch> [--json] [--slot <path>] [--base <branch>] [--force]`                                         | Create or allocate a worktree.                                                                                                                                  |
+| `wktree [--cwd <path>] remove (--branch <branch> \| --self <path>) [--json] [--force]`                                                     | Remove a regular worktree or free a pooled worktree slot.                                                                                                       |
+| `wktree [--cwd <path>] ensure`                                                                                                             | Materialize configured pool slots.                                                                                                                              |
+| `wktree [--cwd <path>] status`                                                                                                             | Print pool status JSON.                                                                                                                                         |
+| `wktree [--cwd <path>] copy [--json]`                                                                                                      | Re-run configured copy setup for the non-canonical worktree containing `cwd`.                                                                                    |
+| `wktree [--cwd <path>] config explain [--json]`                                                                                            | Show the effective policy after defaults, matching rules, and exact project overrides.                                                                           |
+| `wktree [--cwd <path>] finish [--json]`                                                                                                    | Integrate a completed worktree into the canonical root using effective finish policy.                                                                            |
+
+`--cwd` is a global option. It may point at any path inside the intended worktree set and defaults to the current directory. Commands resolve the canonical root from that path; commands that operate on the current/source worktree, such as `copy` and `finish`, target the worktree containing that path.
 
 ### Structured output rules
 
@@ -353,14 +354,15 @@ placeholder/initialized flags.
 `branch_ref`, `detached`, `bare`, `locked`, `lock_reason`, `prunable`, `prunable_reason`,
 `canonical`, `pool`, and `session` (`{ name, path }`).
 
-`status` emits pool state. With no configured pool it is `{ root, trunk: null, size: 0,
-slots: [] }`; otherwise `trunk` and `size` are populated and `slots` is an array of:
-`index`, `path`, `exists`, `branch`, `placeholder`, `dirty`, `lastCommitIso`,
-`lastCommitSubject`, `initialized`.
+`status` emits pool state. With no configured pool it is `{ root, trunk: null,
+hasPool: false, size: 0, slots: [] }`; otherwise `hasPool: true`, `trunk`, and
+`size` are populated and `slots` is an array of: `index`, `path`, `exists`,
+`branch`, `placeholder`, `dirty`, `lastCommitIso`, `lastCommitSubject`,
+`initialized`.
 
-`copy --cwd <path>` targets the non-canonical worktree containing `cwd`. Targeting the
-canonical root is refused with exit code `11` and, when `--json` is used, a
-`{"kind":"blocked","reason":"canonical_root"}` payload, matching the root protection
+`copy` targets the non-canonical worktree containing `--cwd` or the current directory.
+Targeting the canonical root is refused with exit code `11` and, when `--json` is used,
+a `{"kind":"blocked","reason":"canonical_root"}` payload, matching the root protection
 invariant. Copy config errors, invalid copy paths, and missing sources are usage/config
 failures with exit code `12`; even with `--json`, they fail like existing config errors
 rather than emitting a structured stdout payload. Destinations that overlap tracked files

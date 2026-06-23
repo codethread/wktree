@@ -48,20 +48,19 @@ Useful package scripts:
 ## CLI quick reference
 
 ```bash
-wktree root --cwd <path>
-wktree list --cwd <path> [--json]
-wktree path --cwd <path> --branch <branch>
-wktree add --cwd <path> --branch <branch> [--json] [--slot <path>] [--base <branch>] [--force]
-wktree remove --cwd <path> (--branch <branch> | --self <path>) [--json] [--force]
-wktree ensure --cwd <path>
-wktree status --cwd <path>
-wktree recycle --cwd <path> --slot <path> [--force]
-wktree copy --cwd <path> [--json]
-wktree config explain --cwd <path> [--json]
-wktree finish --cwd <path> [--json] [--strategy ff_only|rebase_ff|squash|merge_commit] [--push] [--remove-worktree] [--delete-branch]
+wktree [--cwd <path>] root
+wktree [--cwd <path>] list [--json]
+wktree [--cwd <path>] path --branch <branch>
+wktree [--cwd <path>] add --branch <branch> [--json] [--slot <path>] [--base <branch>] [--force]
+wktree [--cwd <path>] remove (--branch <branch> | --self <path>) [--json] [--force]
+wktree [--cwd <path>] ensure
+wktree [--cwd <path>] status
+wktree [--cwd <path>] copy [--json]
+wktree [--cwd <path>] config explain [--json]
+wktree [--cwd <path>] finish [--json]
 ```
 
-Machine consumers should prefer `--json` where available and branch on payload `kind` rather than stderr text.
+`--cwd` is a global option. It may point at any path inside the intended worktree set and defaults to the current directory; commands resolve the canonical root from there. Machine consumers should prefer `--json` where available and branch on payload `kind` rather than stderr text.
 
 ## Nushell wrapper
 
@@ -72,7 +71,7 @@ Import `nu/wktree/mod.nu` to get the human-facing commands:
 - `wk add <branch> [base] [--self] [--force]`
 - `wk remove <branch> | wk remove --self [--force]`
 - `wk copy [--json]`
-- `wk finish [--json] [--strategy <strategy>] [--push] [--remove-worktree] [--delete-branch]`
+- `wk finish [--json]`
 - `wk list [--json]`
 - `wk switch`
 
@@ -141,8 +140,8 @@ Add policy values are:
 
 An explicit `--base` is treated as an intentional stacked/non-default base: `wktree` fetches first and resolves that base deterministically, but does not require or mutate the canonical default branch.
 
-`finish` integrates the current non-canonical worktree into the canonical default branch. It requires a clean source worktree, fetches first, requires a clean/fresh canonical target, and stops on conflicts. `--strategy` overrides config. `--push` does a normal non-forced push; rejection blocks cleanup. `--remove-worktree` removes a regular worktree or recycles a pooled slot after successful integration and push. `--delete-branch` requires removing/recycling the worktree in the same finish run.
+`finish` integrates the current non-canonical worktree into the canonical default branch. It requires a clean source worktree, fetches first, requires a clean/fresh canonical target, and stops on conflicts. Strategy, push, worktree cleanup, and branch deletion come from effective finish policy in config; use `wktree config explain --cwd <path> [--json]` to inspect them. Configured push is a normal non-forced push; rejection blocks cleanup. Configured `remove_worktree` removes a regular worktree or frees a pooled slot after successful integration and push. Configured `delete_branch` requires cleaning up the worktree in the same effective policy.
 
 String `copy` entries copy root-relative files to the same relative path in the created worktree by default. Object entries use `from` and `to`; `from` may be root-relative, absolute, or start with `~`, and `to` may be a destination string or array of destination strings. Destination paths are always relative to the created worktree. `copy_mode_default` may be `"copy"` or `"symlink"` and applies to all entries unless an object entry sets `mode`. Symlink mode creates destination symlinks to the resolved source target. Copy setup runs before the configured `command`, and can be rerun for an existing non-root worktree with `wktree copy --cwd <path> [--json]` or `wk copy [--json]`.
 
-For pooled projects, `wktree ensure --cwd <path>` materializes slots named like `<root>__featN` with placeholder branches `wk-pool/featN`.
+For pooled projects, `wktree ensure` materializes slots named like `<root>__featN` with placeholder branches `wk-pool/featN`.
