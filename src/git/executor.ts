@@ -32,8 +32,11 @@ export class LiveGitRunner implements GitRunner {
 	}
 
 	async runRaw(args: string[], opts: {cwd?: string} = {}): Promise<GitResult> {
+		// Use a stable neutral cwd when callers rely on git's own -C flag. This keeps
+		// cleanup commands working after a worktree deletes the process's original cwd,
+		// while avoiding accidental writes into the user's home directory.
 		const proc = Bun.spawn(["git", ...args], {
-			cwd: opts.cwd,
+			cwd: opts.cwd ?? "/",
 			stdout: "pipe",
 			stderr: "pipe",
 		});

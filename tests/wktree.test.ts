@@ -555,6 +555,25 @@ describe("LiveGitRunner", () => {
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("git version");
 	});
+
+	test("runs git even when the process cwd was removed", async () => {
+		const originalCwd = process.cwd();
+		const tmp = mkdtempSync(join(tmpdir(), "wktree-git-cwd-test-"));
+		const doomed = join(tmp, "deleted-worktree");
+		mkdirSync(doomed);
+		try {
+			process.chdir(doomed);
+			rmSync(doomed, {recursive: true, force: true});
+
+			const result = await new LiveGitRunner().run(["--version"]);
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("git version");
+		} finally {
+			process.chdir(originalCwd);
+			rmSync(tmp, {recursive: true, force: true});
+		}
+	});
 });
 
 integrationDescribe("wktree non-pool add", () => {
