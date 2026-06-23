@@ -35,6 +35,7 @@ import {
 	PickerCancelled,
 	parseConfig,
 	resolveEffectiveCommand,
+	resolvePreRemoteCheck,
 } from "../src/main";
 
 const integrationDescribe = process.env.WKTREE_SKIP_INTEGRATION === "1" ? describe.skip : describe;
@@ -290,6 +291,35 @@ command = "echo project"
 `);
 		expect(resolveEffectiveCommand(config, "/tmp/repo")).toEqual({
 			command: "echo project",
+			source: "project:/tmp/repo",
+		});
+	});
+
+	test("pre_remote_check defaults to null and resolves with rule/project precedence", () => {
+		const config = parseConfig(`
+[[rule]]
+root_glob = "/tmp/**"
+pre_remote_check = "echo first >&2"
+
+[[rule]]
+root_glob = "/tmp/repo/**"
+pre_remote_check = "echo second >&2"
+
+[[project]]
+root = "/tmp/repo"
+pre_remote_check = "echo project >&2"
+`);
+		expect(resolvePreRemoteCheck(parseConfig(""), "/tmp/repo")).toEqual({value: null, source: null});
+		expect(resolvePreRemoteCheck(config, "/tmp/other")).toEqual({
+			value: "echo first >&2",
+			source: "rule:/tmp/**",
+		});
+		expect(resolvePreRemoteCheck(config, "/tmp/repo/nested")).toEqual({
+			value: "echo second >&2",
+			source: "rule:/tmp/repo/**",
+		});
+		expect(resolvePreRemoteCheck(config, "/tmp/repo")).toEqual({
+			value: "echo project >&2",
 			source: "project:/tmp/repo",
 		});
 	});
@@ -690,6 +720,41 @@ integrationDescribe("wktree non-pool add", () => {
 		expect(
 			(await run(["git", "-C", root, "rev-parse", "refs/heads/feature/restore-tip"])).stdout.trim(),
 		).toBe(originalHead);
+	});
+
+	test("pre_remote_check blocks add before fetch and surfaces stderr", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		await commitOnRemoteDefault({
+			remote,
+			path: "precheck-remote.txt",
+			content: "remote\n",
+			message: "remote before blocked add",
+		});
+		writeConfig(
+			tmp,
+			root,
+			"echo ready",
+			undefined,
+			"pre_remote_check = '''\necho precheck blocked >&2\nexit 7\n'''\n",
+		);
+
+		const result = await dispatch(
+			"add",
+			["--cwd", root, "--branch", "feature/precheck-blocked", "--json"],
+			deps,
+		);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(result.stderr).toContain("precheck blocked");
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			kind: "blocked",
+			reason: "pre_remote_check_failed",
+			message: expect.stringContaining("precheck blocked"),
+		});
+		expect(existsSync(`${root}__feature--precheck-blocked`)).toBe(false);
+		expect((await runRaw(["git", "-C", root, "show", "origin/main:precheck-remote.txt"])).exitCode).not.toBe(
+			0,
+		);
 	});
 
 	test.each([
@@ -1472,6 +1537,26 @@ integrationDescribe("wktree copy", () => {
 		});
 	});
 
+	test("local-only copy skips failing pre_remote_check", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeFileSync(join(root, ".env"), "SECRET=copy\n");
+		writeConfig(
+			tmp,
+			root,
+			"echo ready",
+			undefined,
+			'pre_remote_check = "echo blocked >&2; exit 7"\ncopy = [".env"]\n',
+		);
+		await run(["git", "-C", root, "branch", "feature/local-copy"]);
+		const worktreePath = `${root}__feature--local-copy`;
+		await run(["git", "-C", root, "worktree", "add", worktreePath, "feature/local-copy"]);
+
+		const result = await dispatch("copy", ["--cwd", worktreePath, "--json"], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
+		expect(readFileSync(join(worktreePath, ".env"), "utf8")).toBe("SECRET=copy\n");
+	});
+
 	test("refuses canonical root with JSON blocked payload", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeConfig(tmp, root, "echo ready");
@@ -2164,6 +2249,7 @@ integrationDescribe("wktree read-only commands", () => {
 			matched_rules: [{root_glob: `${realpathSync(tmp)}/**`}],
 			project: {name: "repo", root},
 			command: {source: null, value: null},
+			pre_remote_check: {source: null, value: null},
 			add: {policy: "fresh_canonical"},
 			finish: {
 				enabled: true,
@@ -2231,6 +2317,30 @@ integrationDescribe("wktree pooled add", () => {
 		if (originalHome === undefined) delete process.env.HOME;
 		else process.env.HOME = originalHome;
 		rmSync(tmp, {recursive: true, force: true});
+	});
+
+	test("pre_remote_check blocks pooled status before remote trunk detection", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		await commitOnRemoteDefault({
+			remote,
+			path: "pooled-status-remote.txt",
+			content: "remote\n",
+			message: "remote before blocked status",
+		});
+		writeConfig(tmp, root, "echo ready", 1, 'pre_remote_check = "echo pooled blocked >&2; exit 7"\n');
+
+		const result = await dispatch("status", ["--cwd", root, "--json"], testDeps());
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(result.stderr).toContain("pooled blocked");
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			kind: "blocked",
+			reason: "pre_remote_check_failed",
+			message: expect.stringContaining("pooled blocked"),
+		});
+		expect(
+			(await runRaw(["git", "-C", root, "show", "origin/main:pooled-status-remote.txt"])).exitCode,
+		).not.toBe(0);
 	});
 
 	test("fresh_canonical blocks dirty canonical root before pooled slot allocation", async () => {

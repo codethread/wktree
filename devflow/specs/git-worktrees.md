@@ -1,7 +1,7 @@
 # Git Worktrees Engine
 
 **Status:** Implemented
-**Last Updated:** 2026-06-22
+**Last Updated:** 2026-06-23
 
 ## 1. Overview
 
@@ -209,10 +209,10 @@ that may not need exact project entries. It is resolved from three layers:
 
 Rules match canonical root paths with an explicit `root_glob`. Glob matching is only for root
 selection; copy paths keep their stricter no-glob contract. Rules may provide an optional
-bootstrap `command`; matching rule commands are evaluated in file order with later commands
-winning. Exact project entries remain the place for pools and copy setup, and exact project
-commands override inherited rule commands. Exact projects may also exist only to override policy
-or command defaults for an exceptional repository.
+bootstrap `command` and optional `pre_remote_check`; matching rule values are evaluated in file
+order with later values winning. Exact project entries remain the place for pools and copy setup,
+and exact project `command`/`pre_remote_check` values override inherited rule values. Exact
+projects may also exist only to override policy or command defaults for an exceptional repository.
 
 ### Add freshness policy
 
@@ -231,6 +231,20 @@ requested base cannot be resolved. Existing local or remote branches are checked
 to normal branch-state rules; if policy later governs remote fast-forward of existing branch
 worktrees, failures must be structured as either blocked or warning outcomes rather than
 stderr-only text.
+
+### Remote pre-check
+
+Repositories may resolve an optional `pre_remote_check` Bash snippet from matching rules and an
+exact project entry. `wktree` runs the resolved snippet from the canonical root before any
+remote-aware operation: fetch/push, origin default-branch detection, or freshness checks against
+`origin/*` refs in add, pooled ensure/list/path/status/remove flows, and finish.
+
+- exit `0`: stay silent and continue;
+- non-zero exit: abort immediately, do not perform later remote checks/contact, and surface the
+  script's stderr to the user.
+
+`pre_remote_check` uses the same inline Bash conventions as inherited/bootstrap `command`s; there
+is no extra shell-selection or fallback behavior.
 
 ### Finish lifecycle
 
@@ -408,6 +422,10 @@ canonical root:
     "source": "rule:~/dev/projects/**",
     "value": "bun install"
   },
+  "pre_remote_check": {
+    "source": "rule:~/dev/projects/**",
+    "value": "test -f .envrc || { echo 'missing .envrc' >&2; exit 1; }"
+  },
   "add": { "policy": "fresh_canonical" },
   "finish": {
     "enabled": true,
@@ -453,6 +471,7 @@ Implemented exact project fields:
 | ------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `root`              | yes                                        | Canonical root worktree path.                                                                                                      |
 | `command`           | when no matching rule command exists and using pools, copy, or bootstrap setup | Bootstrap command run as the post-create script. Policy-only exact projects may omit it; absent effective commands emit no bootstrap script. |
+| `pre_remote_check`  | no                                         | Bash snippet run before remote-aware operations for this exact root; exact project values override matching rules.                 |
 | `name`              | no                                         | Project identifier; defaults to the basename of `root`.                                                                            |
 | `pool_size`         | no                                         | Enables pooled mode with this many fixed slots.                                                                                    |
 | `copy_mode_default` | no                                         | `copy` or `symlink`; defaults to `copy` and applies to all copy entries unless overridden.                                         |
@@ -466,6 +485,7 @@ Policy fields:
 | `[defaults.finish]`     | global defaults | Fallback finish policy when no rule or project overrides it: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`. |
 | `[[rule]].root_glob`    | rule            | Canonical root glob to match, with leading `~` expansion only.                                                                      |
 | `[[rule]].command`      | rule            | Optional inherited Bash bootstrap command for matching roots; later matching rule commands win.                                     |
+| `[[rule]].pre_remote_check` | rule        | Optional inherited Bash snippet run before remote-aware operations; later matching rule values win.                                 |
 | `[rule.add].policy`     | rule            | Add policy for matching roots.                                                                                                      |
 | `[rule.finish]`         | rule            | Finish policy for matching roots: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`.                            |
 | `[project.add].policy`  | exact project   | Exact-root add policy override.                                                                                                     |
@@ -488,6 +508,7 @@ delete_branch = false
 
 [[rule]]
 root_glob = "~/dev/projects/**"
+pre_remote_check = "test -f .envrc || { echo 'missing .envrc' >&2; exit 1; }"
 command = '''
 if [[ -f bun.lock ]]; then
   bun install

@@ -24,11 +24,13 @@ import {basename, dirname, join, resolve} from "node:path";
 import {
 	explainPolicy,
 	findProjectForRoot,
-	resolveEffectiveCommand,
 	normalizeExistingPath,
 	readConfig,
 	resolveCopySource,
+	resolveEffectiveCommand,
+	resolvePreRemoteCheck,
 } from "./config.ts";
+import {runInlineBash} from "./hooks.ts";
 import {
 	BlockedError,
 	CanonicalRootError,
@@ -42,6 +44,7 @@ import {
 	EXIT_CODES,
 	NonFastForwardCanonicalError,
 	PickerCancelled,
+	PreRemoteCheckError,
 	TargetNotFreshError,
 	ReservedPrefixError,
 	TrunkDetectionError,
@@ -82,8 +85,8 @@ import type {
 	Worktree,
 } from "./types.ts";
 
-export {explainPolicy, parseConfig, resolveEffectiveCommand} from "./config.ts";
-export {LiveHookRunner} from "./hooks.ts";
+export {explainPolicy, parseConfig, resolveEffectiveCommand, resolvePreRemoteCheck} from "./config.ts";
+export {LiveHookRunner, runInlineBash} from "./hooks.ts";
 export {
 	BlockedError,
 	CanonicalRootError,
@@ -96,6 +99,7 @@ export {
 	PushRejectedError,
 	HookError,
 	PickerCancelled,
+	PreRemoteCheckError,
 	ReservedPrefixError,
 	TargetNotFreshError,
 	TrunkDetectionError,
@@ -201,22 +205,33 @@ async function listCommand(args: string[], deps: Deps) {
 	const cwd = requireOption(opts, "cwd");
 	const output = parseOutputMode(opts);
 	const machineDeps = withMachineJsonProgress(deps, output);
-	const config = readConfig();
-	const canonicalRoot = await resolveCanonicalRoot(machineDeps.git, cwd);
-	const project = findProjectForRoot(config, canonicalRoot);
-	if (project?.poolSize) await ensurePool(project, machineDeps, undefined, config);
-	const worktrees = await listWorktrees(machineDeps.git, cwd);
-	if (output.json) return {stdout: `${JSON.stringify(worktrees.map(toListJson), null, 2)}\n`, exitCode: 0};
-	return {stdout: formatWorktreeList(worktrees), exitCode: 0};
+	try {
+		const config = readConfig();
+		const canonicalRoot = await resolveCanonicalRoot(machineDeps.git, cwd);
+		const project = findProjectForRoot(config, canonicalRoot);
+		if (project?.poolSize) {
+			await runPreRemoteCheck({config, root: canonicalRoot, operation: "wktree list"});
+			await ensurePool(project, machineDeps, undefined, config);
+		}
+		const worktrees = await listWorktrees(machineDeps.git, cwd);
+		if (output.json) return {stdout: `${JSON.stringify(worktrees.map(toListJson), null, 2)}\n`, exitCode: 0};
+		return {stdout: formatWorktreeList(worktrees), exitCode: 0};
+	} catch (error) {
+		const blocked = toBlockedCommandResult(error, output, {});
+		if (blocked) return blocked;
+		throw error;
+	}
 }
 
 async function pathCommand(args: string[], deps: Deps) {
 	const opts = parseOptions(args);
 	const cwd = requireOption(opts, "cwd");
 	const branch = requireOption(opts, "branch");
+	const config = readConfig();
 	const canonicalRoot = await resolveCanonicalRoot(deps.git, cwd);
-	const project = findProjectForRoot(readConfig(), canonicalRoot);
+	const project = findProjectForRoot(config, canonicalRoot);
 	if (project?.poolSize) {
+		await runPreRemoteCheck({config, root: canonicalRoot, operation: "wktree path"});
 		const state = await buildPoolState(project, await listWorktrees(deps.git, canonicalRoot), deps.git);
 		const slot = state.slots.find((candidate) => candidate.branch === branch);
 		if (!slot) throw new BlockedError(`no pooled worktree found for branch ${branch}`);
@@ -245,6 +260,7 @@ async function addCommand(args: string[], deps: Deps) {
 		if (slotPath && !project?.poolSize) {
 			throw new UsageError("--slot is only valid for pooled projects");
 		}
+		await runPreRemoteCheck({config, root: canonicalRoot, operation: "wktree add"});
 		if (project?.poolSize) {
 			return addPooledWorktree({
 				deps: machineDeps,
@@ -557,25 +573,37 @@ async function ensureCommand(args: string[], deps: Deps) {
 	if (!canonical) throw new WktreeError("couldn't determine canonical worktree");
 	const config = readConfig();
 	const project = findProjectForRoot(config, canonical.path);
-	if (project?.poolSize) await ensurePool(project, deps, worktrees, config);
+	if (project?.poolSize) {
+		await runPreRemoteCheck({config, root: canonical.path, operation: "wktree ensure"});
+		await ensurePool(project, deps, worktrees, config);
+	}
 	return {exitCode: 0};
 }
 
 async function statusCommand(args: string[], deps: Deps) {
 	const opts = parseOptions(args);
 	const cwd = requireOption(opts, "cwd");
-	const worktrees = await listWorktrees(deps.git, cwd);
-	const canonical = worktrees.find((worktree) => worktree.canonical);
-	if (!canonical) throw new WktreeError("couldn't determine canonical worktree");
-	const project = findProjectForRoot(readConfig(), canonical.path);
-	if (!project?.poolSize) {
-		return {
-			stdout: `${JSON.stringify({root: canonical.path, trunk: null, hasPool: false, size: 0, slots: []}, null, 2)}\n`,
-			exitCode: 0,
-		};
+	const output: OutputMode = {json: true};
+	try {
+		const worktrees = await listWorktrees(deps.git, cwd);
+		const canonical = worktrees.find((worktree) => worktree.canonical);
+		if (!canonical) throw new WktreeError("couldn't determine canonical worktree");
+		const config = readConfig();
+		const project = findProjectForRoot(config, canonical.path);
+		if (!project?.poolSize) {
+			return {
+				stdout: `${JSON.stringify({root: canonical.path, trunk: null, hasPool: false, size: 0, slots: []}, null, 2)}\n`,
+				exitCode: 0,
+			};
+		}
+		await runPreRemoteCheck({config, root: canonical.path, operation: "wktree status"});
+		const state = await buildPoolState(project, worktrees, deps.git);
+		return {stdout: `${JSON.stringify(state, null, 2)}\n`, exitCode: 0};
+	} catch (error) {
+		const blocked = toBlockedCommandResult(error, output, {});
+		if (blocked) return blocked;
+		throw error;
 	}
-	const state = await buildPoolState(project, worktrees, deps.git);
-	return {stdout: `${JSON.stringify(state, null, 2)}\n`, exitCode: 0};
 }
 
 export async function buildPoolState(
@@ -652,6 +680,8 @@ async function removeCommand(args: string[], deps: Deps) {
 	const self = typeof opts.self === "string" ? opts.self : null;
 	const force = opts.force === true;
 	const keepBranch = opts["keep-branch"] === true;
+	const skipPreRemoteCheck =
+		opts["skip-pre-remote-check"] === true && process.env.WKTREE_INTERNAL_ROLLBACK === "1";
 	if ((branch && self) || (!branch && !self)) {
 		throw new UsageError("provide exactly one of --branch or --self");
 	}
@@ -661,9 +691,13 @@ async function removeCommand(args: string[], deps: Deps) {
 		let worktrees = await listWorktrees(machineDeps.git, cwd);
 		const canonical = worktrees.find((worktree) => worktree.canonical);
 		if (!canonical) throw new WktreeError("couldn't determine canonical worktree");
-		const project = findProjectForRoot(readConfig(), canonical.path);
+		const config = readConfig();
+		const project = findProjectForRoot(config, canonical.path);
 		if (project?.poolSize) {
-			await ensurePool(project, machineDeps, worktrees);
+			if (!skipPreRemoteCheck) {
+				await runPreRemoteCheck({config, root: canonical.path, operation: "wktree remove"});
+			}
+			await ensurePool(project, machineDeps, worktrees, config);
 			worktrees = await listWorktrees(machineDeps.git, cwd);
 		}
 		const target = resolveRemoveTarget(worktrees, canonical.path, {branch, self});
@@ -775,6 +809,7 @@ async function finishCommand(args: string[], deps: Deps) {
 		sourceBranch = source.branch;
 
 		const project = findProjectForRoot(config, canonical.path);
+		await runPreRemoteCheck({config, root: canonical.path, operation: "wktree finish"});
 		const explanation = explainPolicy(config, canonical.path);
 		const finishPolicy = explanation.finishPolicy;
 		if (!finishPolicy.enabled) throw new BlockedError("finish is disabled for this repository");
@@ -872,7 +907,7 @@ async function configCommand(args: string[], deps: Deps) {
 	const matchedRules = payload.matched_rules.map((rule) => rule.root_glob).join(", ") || "(none)";
 	const project = payload.project ? `${payload.project.name ?? "(unnamed)"} ${payload.project.root}` : "(none)";
 	return {
-		stdout: `root: ${payload.root}\nmatched_rules: ${matchedRules}\nproject: ${project}\ncommand.source: ${formatCommandSource(payload.command.source)}\nadd.policy: ${payload.add.policy}\nfinish.enabled: ${payload.finish.enabled}\nfinish.strategy: ${payload.finish.strategy}\nfinish.push: ${payload.finish.push}\nfinish.remove_worktree: ${payload.finish.remove_worktree}\nfinish.delete_branch: ${payload.finish.delete_branch}\n`,
+		stdout: `root: ${payload.root}\nmatched_rules: ${matchedRules}\nproject: ${project}\ncommand.source: ${formatCommandSource(payload.command.source)}\npre_remote_check.source: ${formatCommandSource(payload.pre_remote_check.source)}\nadd.policy: ${payload.add.policy}\nfinish.enabled: ${payload.finish.enabled}\nfinish.strategy: ${payload.finish.strategy}\nfinish.push: ${payload.finish.push}\nfinish.remove_worktree: ${payload.finish.remove_worktree}\nfinish.delete_branch: ${payload.finish.delete_branch}\n`,
 		exitCode: EXIT_CODES.SUCCESS,
 	};
 }
@@ -889,6 +924,10 @@ function toConfigExplainPayload(explanation: ReturnType<typeof explainPolicy>) {
 			source: explanation.command.source,
 			value: explanation.command.command,
 		},
+		pre_remote_check: {
+			source: explanation.preRemoteCheck.source,
+			value: explanation.preRemoteCheck.value,
+		},
 		add: {policy: explanation.addPolicy},
 		finish: {
 			enabled: explanation.finishPolicy.enabled,
@@ -902,6 +941,19 @@ function toConfigExplainPayload(explanation: ReturnType<typeof explainPolicy>) {
 
 function formatCommandSource(source: string | null): string {
 	return source ?? "(none)";
+}
+
+async function runPreRemoteCheck(options: {
+	config: TreesConfig;
+	root: string;
+	operation: string;
+}): Promise<void> {
+	const {config, root, operation} = options;
+	const preRemoteCheck = resolvePreRemoteCheck(config, root);
+	if (!preRemoteCheck.value) return;
+	const result = await runInlineBash(preRemoteCheck.value, root, {});
+	if (result.exitCode === 0) return;
+	throw new PreRemoteCheckError(operation, preRemoteCheck.source, result.stderr.join("\n"));
 }
 
 async function captureExistingBranchHead(options: {
@@ -1125,7 +1177,7 @@ function parseOptions(args: string[]) {
 	const opts: Record<string, string | boolean> = {};
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
-		if (arg === "--json" || arg === "--force" || arg === "--keep-branch") {
+		if (arg === "--json" || arg === "--force" || arg === "--keep-branch" || arg === "--skip-pre-remote-check") {
 			opts[arg.slice(2)] = true;
 			continue;
 		}
@@ -1434,7 +1486,12 @@ function toBlockedCommandResult(
 ): CommandResult | null {
 	if (!output.json || !(error instanceof WktreeError)) return null;
 	const payload = toBlockedPayload(error, context);
-	return payload ? finalizeStructuredResult(payload, output, error.exitCode) : null;
+	if (!payload) return null;
+	const result = finalizeStructuredResult(payload, output, error.exitCode);
+	if (error instanceof PreRemoteCheckError && error.stderr.trim() !== "") {
+		return {...result, stderr: `${error.stderr.trimEnd()}\n`};
+	}
+	return result;
 }
 
 function toBlockedPayload(
@@ -1453,6 +1510,7 @@ function toBlockedPayload(
 	else if (error instanceof FinishConflictError) reason = "conflict";
 	else if (error instanceof PushRejectedError) reason = "push_rejected";
 	else if (error instanceof UnmergedBranchError) reason = "unmerged_branch";
+	else if (error instanceof PreRemoteCheckError) reason = "pre_remote_check_failed";
 	else if (error instanceof CanonicalRootError) reason = "canonical_root";
 	else if (error.exitCode === EXIT_CODES.UNSAFE) reason = "unsafe";
 	return {kind: "blocked", reason, message: error.message, ...context};

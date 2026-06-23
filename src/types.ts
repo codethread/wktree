@@ -21,6 +21,7 @@ export interface ProjectConfig extends PolicyTables {
 	name: string | null;
 	root: string;
 	command: string | null;
+	preRemoteCheck?: string | null;
 	poolSize: number | null;
 	copyModeDefault: CopyMode;
 	copy: CopyEntry[];
@@ -29,6 +30,7 @@ export interface ProjectConfig extends PolicyTables {
 export interface PolicyRule extends PolicyTables {
 	rootGlob: string;
 	command: string | null;
+	preRemoteCheck?: string | null;
 }
 
 export type CopyMode = "copy" | "symlink";

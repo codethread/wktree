@@ -78,7 +78,13 @@ function parseRuleConfig(entry: unknown, index: number): PolicyRule {
 	}
 	const rootGlob = expandRootGlob(entry.root_glob, `${label}: root_glob`);
 	const command = parseOptionalCommand(entry.command, `${label}: command`);
-	return {rootGlob, command, ...parsePolicyTables(entry, label)};
+	const preRemoteCheck = parseOptionalCommand(entry.pre_remote_check, `${label}: pre_remote_check`);
+	return {
+		rootGlob,
+		command,
+		...(preRemoteCheck ? {preRemoteCheck} : {}),
+		...parsePolicyTables(entry, label),
+	};
 }
 
 function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string>): ProjectConfig {
@@ -98,6 +104,7 @@ function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string
 
 	const commandValue = entry.command;
 	const command = parseOptionalCommand(commandValue, `${label}: command`);
+	const preRemoteCheck = parseOptionalCommand(entry.pre_remote_check, `${label}: pre_remote_check`);
 
 	const root = expandPath(rootValue);
 	if (seenRoots.has(root)) {
@@ -118,6 +125,7 @@ function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string
 		name: nameValue ?? basename(root),
 		root,
 		command,
+		...(preRemoteCheck ? {preRemoteCheck} : {}),
 		poolSize,
 		copyModeDefault,
 		copy,
@@ -195,22 +203,51 @@ export function findProjectForRoot(config: TreesConfig, root: string): ProjectCo
 	return config.projects.find((candidate) => normalizeExistingPath(candidate.root) === comparableRoot);
 }
 
-export function resolveEffectiveCommand(config: TreesConfig, canonicalRoot: string) {
+type ResolvedConfigString = {
+	value: string | null;
+	source: string | null;
+};
+
+function resolveEffectiveStringField(
+	config: TreesConfig,
+	canonicalRoot: string,
+	selectors: {
+		ruleValue: (rule: PolicyRule) => string | null | undefined;
+		projectValue: (project: ProjectConfig) => string | null | undefined;
+	},
+): ResolvedConfigString {
 	const root = normalizeExistingPath(canonicalRoot);
 	const project = findProjectForRoot(config, root);
-	let command: string | null = null;
+	let value: string | null = null;
 	let source: string | null = null;
 	for (const rule of config.rules) {
-		if (rule.command && rootGlobMatches(rule.rootGlob, root)) {
-			command = rule.command;
+		const ruleValue = selectors.ruleValue(rule);
+		if (ruleValue && rootGlobMatches(rule.rootGlob, root)) {
+			value = ruleValue;
 			source = `rule:${rule.rootGlob}`;
 		}
 	}
-	if (project?.command) {
-		command = project.command;
+	const projectValue = project ? selectors.projectValue(project) : undefined;
+	if (project && projectValue) {
+		value = projectValue;
 		source = `project:${project.root}`;
 	}
-	return {command, source};
+	return {value, source};
+}
+
+export function resolveEffectiveCommand(config: TreesConfig, canonicalRoot: string) {
+	const resolved = resolveEffectiveStringField(config, canonicalRoot, {
+		ruleValue: (rule) => rule.command,
+		projectValue: (project) => project.command,
+	});
+	return {command: resolved.value, source: resolved.source};
+}
+
+export function resolvePreRemoteCheck(config: TreesConfig, canonicalRoot: string) {
+	return resolveEffectiveStringField(config, canonicalRoot, {
+		ruleValue: (rule) => rule.preRemoteCheck,
+		projectValue: (project) => project.preRemoteCheck,
+	});
 }
 
 export function explainPolicy(config: TreesConfig, canonicalRoot: string) {
@@ -225,7 +262,15 @@ export function explainPolicy(config: TreesConfig, canonicalRoot: string) {
 	}
 	if (project?.add?.policy) addPolicy = project.add.policy;
 	if (project?.finish) finishPolicy = {...finishPolicy, ...project.finish};
-	return {canonicalRoot: root, matchedRules, project, addPolicy, finishPolicy, command: resolveEffectiveCommand(config, root)};
+	return {
+		canonicalRoot: root,
+		matchedRules,
+		project,
+		addPolicy,
+		finishPolicy,
+		command: resolveEffectiveCommand(config, root),
+		preRemoteCheck: resolvePreRemoteCheck(config, root),
+	};
 }
 
 export function normalizeExistingPath(path: string): string {

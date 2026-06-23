@@ -164,6 +164,7 @@ Blocked outcomes:
 		.option("--json", "Machine-readable output")
 		.option("--force", "Force removal")
 		.option("--keep-branch", "Remove/free worktree without deleting branch")
+		.option("--skip-pre-remote-check", "Skip configured pre-remote check")
 		.addHelpText(
 			"after",
 			`

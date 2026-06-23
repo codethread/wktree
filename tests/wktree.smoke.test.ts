@@ -110,6 +110,33 @@ describe("wk nushell smoke", () => {
 		);
 	});
 
+	test("pooled wk add rollback bypasses pre_remote_check after post-create failure", async () => {
+		const {root} = await initRepoWithOrigin(join(tmp, "pooled-post-create-fail"));
+		writeConfig({
+			configHome: env.XDG_CONFIG_HOME,
+			root,
+			poolSize: 1,
+			command:
+				'if [[ -f "$(git -C "$WK_CREATED" rev-parse --git-path wk-pool-initialized)" ]]; then\n  touch "$WK_ROOT/.block-rollback"\n  printf "failing\\n" >&2\n  exit 7\nfi\nprintf "ok\\n" > "$WK_CREATED/setup-ok"',
+			copyToml: 'pre_remote_check = "test ! -f .block-rollback || { echo blocked >&2; exit 7; }"\n',
+		});
+
+		const result = await runRaw(
+			["nu", "-c", `use ${nuString(nuModule)} *; cd ${nuString(root)}; wk add feature/fails`],
+			env,
+		);
+
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stderr).toContain("wk: post-create failed; rolling back");
+		expect(result.stderr).not.toContain("wk: rollback failed");
+		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
+			"wk-pool/feat1",
+		);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/fails"])).exitCode,
+		).not.toBe(0);
+	});
+
 	test("pooled wk add initializes slots, recycles, and reallocates non-interactively", async () => {
 		const {root} = await initRepoWithOrigin(join(tmp, "pool"));
 		writeFileSync(join(root, ".gitignore"), "pool-sentinel\n");

@@ -79,9 +79,9 @@ Import `nu/wktree/mod.nu` to get the human-facing commands:
 
 ## Project configuration
 
-Project config is read from `ct-worktrees/trees.toml` under XDG config home. Projects can define `name`, `root`, optional `command`, optional `pool_size`, optional `copy` entries, and policy overrides. Rules can define inherited default `command`s for matching roots. `command` is required when a project uses pools or copy/bootstrap setup, but it may come from either the exact project or a matching rule. Policy-only exact projects may omit it. Use `wktree config explain --cwd <path> [--json]` to inspect the effective policy and bootstrap command source.
+Project config is read from `ct-worktrees/trees.toml` under XDG config home. Projects can define `name`, `root`, optional `command`, optional `pre_remote_check`, optional `pool_size`, optional `copy` entries, and policy overrides. Rules can define inherited default `command`s and `pre_remote_check`s for matching roots. `command` is required when a project uses pools or copy/bootstrap setup, but it may come from either the exact project or a matching rule. Policy-only exact projects may omit it. Use `wktree config explain --cwd <path> [--json]` to inspect the effective policy, bootstrap command source, and resolved remote pre-check source.
 
-Resolution starts with built-in defaults, applies matching `[[rule]]` entries in file order, then applies exact `[[project]]` overrides. Finish policy fields merge field-by-field. For inherited commands, later matching rule commands win and exact project commands override rules.
+Resolution starts with built-in defaults, applies matching `[[rule]]` entries in file order, then applies exact `[[project]]` overrides. Finish policy fields merge field-by-field. For inherited commands and `pre_remote_check`, later matching rule values win and exact project values override rules.
 
 ```toml
 [defaults.add]
@@ -96,6 +96,7 @@ delete_branch = false
 
 [[rule]]
 root_glob = "~/dev/projects/**"
+pre_remote_check = "test -f .envrc || { echo 'missing .envrc' >&2; exit 1; }"
 command = '''
 if [[ -f bun.lock ]]; then
   bun install
@@ -141,6 +142,8 @@ Add policy values are:
 An explicit `--base` is treated as an intentional stacked/non-default base: `wktree` fetches first and resolves that base deterministically, but does not require or mutate the canonical default branch.
 
 `finish` integrates the current non-canonical worktree into the canonical default branch. It requires a clean source worktree, fetches first, requires a clean/fresh canonical target, and stops on conflicts. Strategy, push, worktree cleanup, and branch deletion come from effective finish policy in config; use `wktree config explain --cwd <path> [--json]` to inspect them. Configured push is a normal non-forced push; rejection blocks cleanup. Configured `remove_worktree` removes a regular worktree or frees a pooled slot after successful integration and push. Configured `delete_branch` requires cleaning up the worktree in the same effective policy.
+
+If a resolved `pre_remote_check` is configured, `wktree` runs it under bash from the canonical root before any remote-aware operation: add, pooled ensure/list/path/status/remove flows, and finish. Exit `0` stays silent and continues. Any non-zero exit aborts before remote checks or contact and surfaces the script's stderr.
 
 String `copy` entries copy root-relative files to the same relative path in the created worktree by default. Object entries use `from` and `to`; `from` may be root-relative, absolute, or start with `~`, and `to` may be a destination string or array of destination strings. Destination paths are always relative to the created worktree. `copy_mode_default` may be `"copy"` or `"symlink"` and applies to all entries unless an object entry sets `mode`. Symlink mode creates destination symlinks to the resolved source target. Copy setup runs before the configured `command`, and can be rerun for an existing non-root worktree with `wktree copy --cwd <path> [--json]` or `wk copy [--json]`.
 

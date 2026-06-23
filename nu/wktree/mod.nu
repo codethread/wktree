@@ -51,11 +51,12 @@ def rollback-add-payload [payload: record] {
         $payload.worktree_path
         --force
         --json
+        --skip-pre-remote-check
     ]
     let args = if $keep_branch {
         $args | append "--keep-branch"
     } else { $args }
-    let cleanup = (^wktree ...$args | complete)
+    let cleanup = with-env {WKTREE_INTERNAL_ROLLBACK: "1"} { ^wktree ...$args | complete }
     if $cleanup.stderr != "" {
         print --stderr --no-newline $cleanup.stderr
     }

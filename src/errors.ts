@@ -53,6 +53,19 @@ export class FinishConflictError extends BlockedError {}
 export class PushRejectedError extends BlockedError {}
 export class ReservedPrefixError extends UsageError {}
 export class CanonicalRootError extends UnsafeOperationError {}
+export class PreRemoteCheckError extends BlockedError {
+	constructor(
+		public operation: string,
+		public source: string | null,
+		public stderr: string,
+	) {
+		super(
+			stderr.trim() !== ""
+				? `pre_remote_check failed before ${operation}${source ? ` (${source})` : ""}\n${stderr.trimEnd()}`
+				: `pre_remote_check failed before ${operation}${source ? ` (${source})` : ""}`,
+		);
+	}
+}
 export class HookError extends WktreeError {
 	constructor(
 		public hookExitCode: number,
