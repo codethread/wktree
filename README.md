@@ -10,25 +10,26 @@ Requirements: git and Bun.
 
 ### Homebrew
 
-Tap this repository directly, then install the HEAD formula:
+Tap this repository directly, then install the latest tagged release:
 
 ```bash
 brew tap codethread/wktree https://github.com/codethread/wktree
-brew install --HEAD codethread/wktree/wktree
+brew install codethread/wktree/wktree
 ```
 
 Or as one shell command:
 
 ```bash
-brew tap codethread/wktree https://github.com/codethread/wktree && brew install --HEAD codethread/wktree/wktree
+brew tap codethread/wktree https://github.com/codethread/wktree && brew install codethread/wktree/wktree
 ```
 
-This installs a small `wktree` launcher that runs the checked-out TypeScript CLI with Homebrew's Bun. Because the CLI is installed from source instead of distributed as a downloaded macOS executable, it avoids Developer ID signing/notarization friction.
+This installs a small `wktree` launcher that runs the tagged TypeScript CLI with Homebrew's Bun. Because the CLI is installed from source instead of distributed as a downloaded macOS executable, it avoids Developer ID signing/notarization friction.
 
-To upgrade a HEAD install:
+To upgrade to the newest tagged release after the formula is updated:
 
 ```bash
-brew upgrade wktree --fetch-HEAD
+brew update
+brew upgrade wktree
 ```
 
 ### Build from source

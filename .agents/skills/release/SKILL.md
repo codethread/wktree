@@ -56,6 +56,8 @@ Update every version source to the same new version:
 If `package.json` does not yet have a `version` field, add one near the package name.
 If `src/cli.ts` does not yet expose a version, add it to the root `Command` setup so `wktree --version` reports the release version.
 
+Do not update `Formula/wktree.rb` yet. The formula should point at the final release tag and peeled commit revision, which only exist after the release commit is tagged.
+
 ## 5. Update `CHANGELOG.md`
 
 Add a new entry using the [Keep a Changelog](https://keepachangelog.com/) style:
@@ -123,13 +125,43 @@ git push origin main
 git push origin "vx.y.z"
 ```
 
-Verify the pushed tag exists remotely:
+Verify the pushed tag exists remotely and capture the peeled commit SHA:
 
 ```bash
 git ls-remote --tags origin "vx.y.z"
+git rev-list -n 1 "vx.y.z"
 ```
 
-## 9. Post-release sanity check
+For annotated tags, use the peeled commit SHA from `git rev-list -n 1`, not the tag-object SHA.
+
+## 9. Update Homebrew formula
+
+Update `Formula/wktree.rb` so the stable formula uses the new tag rather than `head`/`--HEAD`:
+
+```ruby
+url "https://github.com/codethread/wktree.git",
+    tag:      "vx.y.z",
+    revision: "<peeled-commit-sha>"
+```
+
+Validate the formula locally:
+
+```bash
+ruby -c Formula/wktree.rb
+brew style Formula/wktree.rb
+```
+
+Commit and push the formula update:
+
+```bash
+git add Formula/wktree.rb
+git commit -m "chore(homebrew): update formula to vx.y.z"
+git push origin main
+```
+
+Keep `README.md` aligned with the release style if Homebrew install or upgrade commands change; it should document normal tagged-release installs, not `brew install --HEAD`.
+
+## 10. Post-release sanity check
 
 Optionally install or run from a fresh checkout and confirm:
 
@@ -138,4 +170,4 @@ wktree --version
 wktree --help
 ```
 
-The reported version should match `package.json`, `src/cli.ts`, `CHANGELOG.md`, and the git tag.
+The reported version should match `package.json`, `src/cli.ts`, `CHANGELOG.md`, the git tag, and `Formula/wktree.rb`.
