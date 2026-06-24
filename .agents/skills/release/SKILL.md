@@ -1,3 +1,7 @@
+---
+description: run the release process
+---
+
 # Release process
 
 Use this checklist to publish a new `wktree` release.
