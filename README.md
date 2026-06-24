@@ -6,16 +6,30 @@ It is useful when you want predictable worktree paths, safe cleanup, JSON output
 
 ## Install
 
-Requirements: git. If building from source, also install Bun.
+Requirements: git and Bun.
 
-### Prebuilt macOS binary
+### Homebrew
 
-GitHub Actions builds standalone macOS archives for Apple Silicon and Intel on pushes and version tags:
+Tap this repository directly, then install the HEAD formula:
 
-- `wktree-darwin-arm64.tar.gz`
-- `wktree-darwin-x64.tar.gz`
+```bash
+brew tap codethread/wktree https://github.com/codethread/wktree
+brew install --HEAD codethread/wktree/wktree
+```
 
-Download the archive for your Mac, unpack it, rename or symlink the binary to `wktree`, and place it on your `PATH`.
+Or as one shell command:
+
+```bash
+brew tap codethread/wktree https://github.com/codethread/wktree && brew install --HEAD codethread/wktree/wktree
+```
+
+This installs a small `wktree` launcher that runs the checked-out TypeScript CLI with Homebrew's Bun. Because the CLI is installed from source instead of distributed as a downloaded macOS executable, it avoids Developer ID signing/notarization friction.
+
+To upgrade a HEAD install:
+
+```bash
+brew upgrade wktree --fetch-HEAD
+```
 
 ### Build from source
 
@@ -30,8 +44,6 @@ make
 ```
 
 Make sure `~/.local/bin` is on your `PATH`.
-
-For releasable standalone macOS binaries, run `bun run build:macos`; outputs are written to `dist/`.
 
 After installing, use the built-in help for the full command reference:
 
