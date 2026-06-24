@@ -1,150 +1,251 @@
 # wktree
 
-Deterministic local worktree manager for creating, reusing, inspecting, and removing git worktrees. `wktree` centralizes git/worktree lifecycle behavior so humans, Nushell wrappers, tmux workflows, and agents all use the same command contract.
+`wktree` is a deterministic git worktree manager. It creates, finds, prepares, finishes, and removes worktrees using one consistent contract for humans, shell/tmux wrappers, scripts, and agents.
 
-See [`devflow/specs/git-worktrees.md`](./devflow/specs/git-worktrees.md) for the durable design contract and edge-case semantics.
+It is useful when you want predictable worktree paths, safe cleanup, JSON output, optional fixed worktree pools, and repeatable setup for local files such as `.env`.
 
-## What it provides
+## Install
 
-- Branch/path/session names derived deterministically from git state.
-- Safe creation and removal of regular sibling worktrees.
-- Optional fixed-size per-repository worktree pools for expensive projects.
-- Structured JSON outcomes for machine consumers.
-- Human-facing Nushell commands that open/switch tmux sessions.
-- No durable app database: engine state is reconstructed from git metadata, filesystem paths, and project config; live tmux panes are wrapper-only UI state.
+Requirements: git. If building from source, also install Bun.
 
-## Repository layout
+### Prebuilt macOS binary
 
-- `bin/wktree.ts` — thin executable entrypoint.
-- `src/main.ts` — exported engine/dispatch behavior used by tests and consumers.
-- `src/cli.ts` — Commander-based process CLI wiring.
-- `src/config.ts` and `src/schemas.ts` — TOML config parsing and validation schemas.
-- `src/git/` — git execution abstractions and worktree parsers.
-- `src/fzf.ts` — interactive picker helper.
-- `nu/wktree/` — Nushell wrapper and tmux workflow integration.
-- `tests/` — Bun tests for engine and wrapper behavior.
-- `scripts/build-bin.ts` — builds the `~/.local/bin/wktree` wrapper.
-- `devflow/specs/` — persistent product/design specifications.
+GitHub Actions builds standalone macOS archives for Apple Silicon and Intel on pushes and version tags:
 
-## Development
+- `wktree-darwin-arm64.tar.gz`
+- `wktree-darwin-x64.tar.gz`
 
-This project uses Bun, TypeScript, and Biome.
+Download the archive for your Mac, unpack it, rename or symlink the binary to `wktree`, and place it on your `PATH`.
+
+### Build from source
 
 ```bash
-bun install
-bun test tests
-bun run typecheck
-bun run check
-bun run build
+make
 ```
 
-Useful package scripts:
+`make` runs `bun install` and `bun run build`. The build writes:
 
-- `bun test tests` — run the test suite.
-- `bun run typecheck` — run `tsc --noEmit`.
-- `bun run check` — run Biome checks.
-- `bun run build` — generate `~/.local/bin/wktree`, a thin wrapper around `bun run bin/wktree.ts`.
+```text
+~/.local/bin/wktree
+```
 
-## CLI quick reference
+Make sure `~/.local/bin` is on your `PATH`.
+
+For releasable standalone macOS binaries, run `bun run build:macos`; outputs are written to `dist/`.
+
+After installing, use the built-in help for the full command reference:
 
 ```bash
-wktree [--cwd <path>] root
-wktree [--cwd <path>] list [--json]
-wktree [--cwd <path>] path --branch <branch>
-wktree [--cwd <path>] add --branch <branch> [--json] [--slot <path>] [--base <branch>] [--force]
-wktree [--cwd <path>] remove (--branch <branch> | --self <path>) [--json] [--force]
-wktree [--cwd <path>] ensure
-wktree [--cwd <path>] status
-wktree [--cwd <path>] copy [--json]
-wktree [--cwd <path>] config explain [--json]
-wktree [--cwd <path>] finish [--json]
+wktree --help
+wktree add --help
+wktree config explain --help
 ```
 
-`--cwd` is a global option. It may point at any path inside the intended worktree set and defaults to the current directory; commands resolve the canonical root from there. Machine consumers should prefer `--json` where available and branch on payload `kind` rather than stderr text.
+## How it works
 
-## Nushell wrapper
+`wktree` resolves one checkout as the **canonical root** for a repository. That root is protected and anchors config lookup, default-branch policy, generated paths, and safety checks.
 
-Import `nu/wktree/mod.nu` to get the human-facing commands:
+Normal worktrees are created beside the root:
 
-- `wk root`
-- `wk path <branch>`
-- `wk add <branch> [base] [--self] [--force]`
-- `wk remove <branch> | wk remove --self [--force]`
-- `wk copy [--json]`
-- `wk finish [--json]`
-- `wk list [--json]`
-- `wk switch`
+```text
+<canonical-root>__<branch-name-with-/encoded-as-->
+```
 
-`wk add` delegates freshness policy to the TypeScript engine, runs any returned post-create script, and then opens or switches to the emitted tmux session/path. `wk remove` and cleanup-enabled `wk finish` close wrapper-owned tmux sessions after successful engine operations.
+Pooled repositories reuse fixed slots instead:
 
-## Project configuration
+```text
+<canonical-root>__feat1
+<canonical-root>__feat2
+...
+```
 
-Project config is read from `ct-worktrees/trees.toml` under XDG config home. Projects can define `name`, `root`, optional `command`, optional `pre_remote_check`, optional `pool_size`, optional `copy` entries, and policy overrides. Rules can define inherited default `command`s and `pre_remote_check`s for matching roots. `command` is required when a project uses pools or copy/bootstrap setup, but it may come from either the exact project or a matching rule. Policy-only exact projects may omit it. Use `wktree config explain --cwd <path> [--json]` to inspect the effective policy, bootstrap command source, and resolved remote pre-check source.
+There is no app database. Current state comes from git worktree metadata, filesystem paths, and config. Tmux integration consumes emitted path/session data; it is not the source of truth.
 
-Resolution starts with built-in defaults, applies matching `[[rule]]` entries in file order, then applies exact `[[project]]` overrides. Finish policy fields merge field-by-field. For inherited commands and `pre_remote_check`, later matching rule values win and exact project values override rules.
+## Basic use
+
+From any path inside a repository worktree set:
+
+```bash
+wktree root
+wktree add --branch feature/example
+wktree list
+wktree path --branch feature/example
+wktree remove --branch feature/example
+```
+
+For scripts and agents, prefer JSON where available and branch on the payload `kind`:
+
+```bash
+wktree add --branch feature/example --json
+wktree list --json
+wktree finish --json
+```
+
+If `add --json` returns `post_create_script_path`, run that script with bash before treating the worktree as ready.
+
+Use this to see what config applies to the current repository:
+
+```bash
+wktree config explain --json
+```
+
+## Config
+
+Config is optional. Without it, `wktree` still creates deterministic sibling worktrees.
+
+Config is read from:
+
+```text
+${XDG_CONFIG_HOME:-~/.config}/ct-worktrees/trees.toml
+```
+
+Resolution order:
+
+1. built-in defaults;
+2. matching `[[rule]]` entries in file order;
+3. exact `[[project]]` entry for the canonical root.
+
+Later layers override earlier ones.
+
+### Schema
 
 ```toml
 [defaults.add]
-policy = "origin_default"
+policy = "origin_default" # "origin_default" | "fresh_canonical"
 
 [defaults.finish]
 enabled = true
-strategy = "ff_only"
+strategy = "ff_only"      # "ff_only" | "rebase_ff" | "squash" | "merge_commit"
 push = false
 remove_worktree = false
 delete_branch = false
 
 [[rule]]
-root_glob = "~/dev/projects/**"
-pre_remote_check = "test -f .envrc || { echo 'missing .envrc' >&2; exit 1; }"
-command = '''
-if [[ -f bun.lock ]]; then
-  bun install
-elif [[ -f yarn.lock ]]; then
-  yarn install
-elif [[ -f pnpm-lock.yaml ]]; then
-  pnpm install
-else
-  echo "wktree: no known JS lockfile found; skipping install"
-fi
-'''
+root_glob = "~/dev/projects/**"   # required for rules; leading ~/ supported
+command = "bun install"           # optional bash snippet
+pre_remote_check = "test -f .env" # optional bash snippet
 
 [rule.add]
 policy = "fresh_canonical"
 
 [rule.finish]
+enabled = true
 strategy = "squash"
 push = true
+remove_worktree = true
+delete_branch = true
 
 [[project]]
-name = "example"
-root = "~/dev/example"
-command = "bun install"
-pool_size = 3
-copy = [".env"]
+root = "~/dev/projects/example"   # required for projects
+name = "example"                  # optional; defaults to basename(root)
+command = "bun install"           # required for pools/copy unless inherited from a rule
+pre_remote_check = "test -f .env" # optional
+pool_size = 3                      # optional; enables fixed slots
+copy_mode_default = "copy"        # optional: "copy" | "symlink"; default "copy"
+copy = [                           # optional
+  ".env",
+  { from = "~/shared/tooling", to = ".tooling", mode = "symlink" },
+  { from = ".claude", to = [".claude", ".pi/claude"], mode = "copy" },
+]
 
 [project.add]
 policy = "origin_default"
 
 [project.finish]
-strategy = "merge_commit"
+enabled = true
+strategy = "ff_only"
+push = false
+remove_worktree = false
+delete_branch = false
+```
+
+Notes:
+
+- `command` and `pre_remote_check` run under bash.
+- `command` receives `WK_ROOT` and `WK_CREATED`.
+- `origin_default` starts default-base work from `origin/<default>` without mutating the canonical root.
+- `fresh_canonical` fetches, requires a clean canonical root on the default branch, fast-forwards it, then starts work from that fresh local branch.
+- `copy` destinations are always worktree-relative. String entries copy from the canonical root to the same relative path.
+- `delete_branch = true` requires `remove_worktree = true` in the same effective finish policy.
+
+## Examples
+
+### Personal defaults
+
+```toml
+[defaults.add]
+policy = "origin_default"
+
+[[rule]]
+root_glob = "~/dev/projects/**"
+command = '''
+if [[ -f bun.lock ]]; then
+  bun install
+elif [[ -f package-lock.json ]]; then
+  npm install
+else
+  echo "wktree: no known install step"
+fi
+'''
+```
+
+### Strict work repos
+
+```toml
+[[rule]]
+root_glob = "~/work/**"
+pre_remote_check = "test -f .envrc || { echo 'missing .envrc' >&2; exit 1; }"
+
+[rule.add]
+policy = "fresh_canonical"
+```
+
+### Expensive repo with a pool
+
+```toml
+[[project]]
+name = "big-app"
+root = "~/dev/projects/big-app"
+pool_size = 4
+command = "bun install"
+copy = [".env"]
+```
+
+```bash
+wktree ensure --cwd ~/dev/projects/big-app
+wktree status --cwd ~/dev/projects/big-app
+```
+
+### Finish and clean up
+
+```toml
+[[project]]
+name = "library"
+root = "~/dev/projects/library"
+
+[project.finish]
+strategy = "squash"
+push = true
 remove_worktree = true
 delete_branch = true
 ```
 
-Valid finish strategies are `ff_only`, `rebase_ff`, `squash`, and `merge_commit`.
+From a non-canonical worktree:
 
-Add policy values are:
+```bash
+wktree finish --json
+```
 
-- `origin_default`: fetch `origin` and start new branches from `origin/<default>` without changing the canonical root.
-- `fresh_canonical`: fetch `origin`, require the canonical root to be clean and checked out on the default branch, fast-forward it, then start new branches without an explicit `--base` from that fresh local default branch. If the root is dirty, on the wrong branch, or cannot fast-forward, default-base `add` fails hard rather than falling back to stale canonical state.
+## Nushell wrapper
 
-An explicit `--base` is treated as an intentional stacked/non-default base: `wktree` fetches first and resolves that base deterministically, but does not require or mutate the canonical default branch.
+The TypeScript CLI is the source of truth. `nu/wktree/` provides human-friendly `wk` commands and tmux switching around the same engine.
 
-`finish` integrates the current non-canonical worktree into the canonical default branch. It requires a clean source worktree, fetches first, requires a clean/fresh canonical target, and stops on conflicts. Strategy, push, worktree cleanup, and branch deletion come from effective finish policy in config; use `wktree config explain --cwd <path> [--json]` to inspect them. Configured push is a normal non-forced push; rejection blocks cleanup. Configured `remove_worktree` removes a regular worktree or frees a pooled slot after successful integration and push. Configured `delete_branch` requires cleaning up the worktree in the same effective policy.
+## Development
 
-If a resolved `pre_remote_check` is configured, `wktree` runs it under bash from the canonical root before any remote-aware operation: add, pooled ensure/list/path/status/remove flows, and finish. Exit `0` stays silent and continues. Any non-zero exit aborts before remote checks or contact and surfaces the script's stderr.
+```bash
+bun test tests
+bun run typecheck
+bun run check
+```
 
-String `copy` entries copy root-relative files to the same relative path in the created worktree by default. Object entries use `from` and `to`; `from` may be root-relative, absolute, or start with `~`, and `to` may be a destination string or array of destination strings. Destination paths are always relative to the created worktree. `copy_mode_default` may be `"copy"` or `"symlink"` and applies to all entries unless an object entry sets `mode`. Symlink mode creates destination symlinks to the resolved source target. Copy setup runs before the configured `command`, and can be rerun for an existing non-root worktree with `wktree copy --cwd <path> [--json]` or `wk copy [--json]`.
-
-For pooled projects, `wktree ensure` materializes slots named like `<root>__featN` with placeholder branches `wk-pool/featN`.
+The durable design contract lives in [`devflow/specs/git-worktrees.md`](./devflow/specs/git-worktrees.md).
