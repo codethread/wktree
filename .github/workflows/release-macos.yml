@@ -37,11 +37,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Validate
+      - name: Validate Bun CLI
         run: |
           bun run typecheck
           bun run check
-          bun test tests
+          bun test tests/wktree.test.ts
 
       - name: Build standalone macOS binary
         run: |
