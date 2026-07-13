@@ -97,7 +97,7 @@ def pick-pool-slot [branch: string, candidates: list<record>, force: bool] {
     if $force {
         return $selected
     }
-    let answer = input $"Recycle ($selected.branch) at ($selected.path)? [y/N]: " | str trim | str downcase
+    let answer = input $"Recycle ($selected.branch) at ($selected.path)? [y/N]: " | str trim | str lowercase
     if $answer not-in ["y", "yes"] {
         return null
     }
