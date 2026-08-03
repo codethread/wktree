@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.1] - 2026-08-03
+
+### Changed
+
+- Homebrew installs now use stable tagged releases.
+
+### Fixed
+
+- `remove --keep-branch` now removes clean worktrees or recycles clean pool slots without requiring the retained branch to be merged, supporting squash-merged pull requests.
+- Corrected the Nushell pool-recycle confirmation normalization.
+
 ## [0.1.0] - 2026-06-24
 
 ### Added
