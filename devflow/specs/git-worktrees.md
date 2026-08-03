@@ -123,7 +123,7 @@ Missing tmux sessions are normal and reconstructable, never an error.
 
 ### Safety invariants
 
-- Unforced operations refuse dirty, ahead, local-only, or otherwise ambiguous states.
+- Unforced operations refuse dirty, ahead, local-only, or otherwise ambiguous states. `remove --keep-branch` is the exception for branch merge/upstream state: it requires a clean worktree or slot but removes/recycles it without checking whether the retained branch is merged.
 - Forced operations may be destructive but MUST preserve gitignored files such as
   dependency directories when recycling.
 
@@ -141,8 +141,9 @@ the `pool_full` outcome.
   initialization failure.
 - Allocation prefers initialized placeholder slots first.
 - Safe recycling refuses dirty slots, branches without upstreams, and branches not merged
-  to upstream. Forced recycling may discard tracked/untracked work and delete the old
-  branch.
+  to upstream when deleting the old branch. `remove --keep-branch` only requires a clean
+  slot, then resets it to its placeholder while preserving the old branch. Forced recycling
+  may discard tracked/untracked work and delete the old branch.
 - Exhaustion returns `pool_full` with recyclable candidates (see §4).
 
 ### Bootstrap
@@ -288,7 +289,7 @@ rules.
 | `wktree [--cwd <path>] list [--json]`                                                                                                      | List worktrees and initialize configured pools.                                                                                                                 |
 | `wktree [--cwd <path>] path --branch <branch>`                                                                                             | Print the worktree path for a branch.                                                                                                                           |
 | `wktree [--cwd <path>] add --branch <branch> [--json] [--slot <path>] [--base <branch>] [--force]`                                         | Create or allocate a worktree.                                                                                                                                  |
-| `wktree [--cwd <path>] remove (--branch <branch> \| --self <path>) [--json] [--force]`                                                     | Remove a regular worktree or free a pooled worktree slot.                                                                                                       |
+| `wktree [--cwd <path>] remove (--branch <branch> \| --self <path>) [--json] [--force] [--keep-branch]`                                     | Remove a regular worktree or free a pooled worktree slot. `--keep-branch` retains the branch after clean removal/recycling without a merge check.                 |
 | `wktree [--cwd <path>] ensure`                                                                                                             | Materialize configured pool slots.                                                                                                                              |
 | `wktree [--cwd <path>] status`                                                                                                             | Print pool status JSON.                                                                                                                                         |
 | `wktree [--cwd <path>] copy [--json]`                                                                                                      | Re-run configured copy setup for the non-canonical worktree containing `cwd`.                                                                                    |

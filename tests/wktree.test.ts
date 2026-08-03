@@ -2038,6 +2038,28 @@ integrationDescribe("wktree non-pool remove", () => {
 		).not.toBe(0);
 	});
 
+	test("keep-branch removes a clean unmerged worktree and preserves its branch", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/squash-merged", "--json"], deps);
+		writeFileSync(join(`${root}__feature--squash-merged`, "work.txt"), "work\n");
+		await run(["git", "-C", `${root}__feature--squash-merged`, "add", "work.txt"]);
+		await run(["git", "-C", `${root}__feature--squash-merged`, "commit", "-m", "work"]);
+
+		const result = await dispatch(
+			"remove",
+			["--cwd", root, "--branch", "feature/squash-merged", "--keep-branch", "--json"],
+			deps,
+		);
+
+		expect(result.exitCode).toBe(0);
+		expect(existsSync(`${root}__feature--squash-merged`)).toBe(false);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/squash-merged"]))
+				.exitCode,
+		).toBe(0);
+	});
+
 	test("machine json remove reports blocked outcomes with unsafe exit codes", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeConfig(tmp, root, "echo ready");
@@ -2822,15 +2844,39 @@ integrationDescribe("pooled wktree remove", () => {
 		});
 	});
 
+	test("keep-branch recycles a clean unmerged slot and preserves its branch", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", 1);
+		await dispatch("add", ["--cwd", root, "--branch", "feature/squash-merged", "--json"], testDeps());
+		writeFileSync(join(`${root}__feat1`, "work.txt"), "work\n");
+		await run(["git", "-C", `${root}__feat1`, "add", "work.txt"]);
+		await run(["git", "-C", `${root}__feat1`, "commit", "-m", "work"]);
+
+		const result = await dispatch(
+			"remove",
+			["--cwd", root, "--branch", "feature/squash-merged", "--keep-branch", "--json"],
+			testDeps(),
+		);
+
+		expect(result.exitCode).toBe(0);
+		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
+			"wk-pool/feat1",
+		);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/squash-merged"]))
+				.exitCode,
+		).toBe(0);
+	});
+
 	test("safe preflight blocks dirty slots and leaves branch untouched", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeConfig(tmp, root, "echo ready", 1);
 		await dispatch("add", ["--cwd", root, "--branch", "feature/dirty", "--json"], testDeps());
 		writeFileSync(join(`${root}__feat1`, "dirty.txt"), "dirty\n");
 
-		await expect(dispatch("remove", ["--cwd", root, "--self", `${root}__feat1`], testDeps())).rejects.toThrow(
-			"uncommitted changes",
-		);
+		await expect(
+			dispatch("remove", ["--cwd", root, "--self", `${root}__feat1`, "--keep-branch"], testDeps()),
+		).rejects.toThrow("uncommitted changes");
 
 		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
 			"feature/dirty",

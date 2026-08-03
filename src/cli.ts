@@ -175,9 +175,10 @@ Use when:
   agent wants to remove the checkout it is operating in.
 
 Safety:
-  The canonical root is protected. Without --force, removal refuses dirty,
-  ahead, local-only, unmerged, or otherwise ambiguous work. --keep-branch removes
-  only the checkout/slot occupancy and leaves the branch ref intact.
+  The canonical root is protected. Without --force, removal refuses dirty or
+  otherwise ambiguous work. Without --keep-branch, it also refuses ahead,
+  local-only, or unmerged branches. --keep-branch removes only the clean
+  checkout/slot occupancy and leaves the branch ref intact.
 
 Related:
   finish can integrate a completed worktree and then clean it up as one

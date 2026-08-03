@@ -717,7 +717,7 @@ async function removeCommand(args: string[], deps: Deps) {
 			return finalizeStructuredResult(toRemovePayload({worktreePath: target.path, removed: false}), output);
 		}
 
-		if (target.branch && !force)
+		if (target.branch && !force && !keepBranch)
 			await assertBranchSafelyDeletable(machineDeps.git, canonical.path, target.branch);
 		await machineDeps.git.run([
 			"-C",
@@ -1041,7 +1041,8 @@ async function recycleSlot(options: {
 
 	const dirty = (await git.runRaw(["-C", slot.path, "status", "--porcelain=v1"])).stdout.trim() !== "";
 	if (dirty) throw new DirtySlotError(`slot ${slot.path} has uncommitted changes; pass --force to recycle`);
-	if (oldBranch && oldBranch !== placeholderBranch) await assertBranchHasMergedUpstream(git, root, oldBranch);
+	if (oldBranch && oldBranch !== placeholderBranch && !keepBranch)
+		await assertBranchHasMergedUpstream(git, root, oldBranch);
 	await git.run(["-C", slot.path, "checkout", "-B", placeholderBranch, `origin/${state.trunk}`]);
 	if (oldBranch && oldBranch !== placeholderBranch && !keepBranch) await git.run(["-C", root, "branch", "-d", oldBranch]);
 }
