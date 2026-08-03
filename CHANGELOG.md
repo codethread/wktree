@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.0] - 2026-08-03
+
+### Added
+
+- `wktree remove --integrated-into origin/main` verifies a clean branch's source-relative content is present in a fetched remote target before removing its worktree and branch, supporting squash-merged pull requests.
+
 ## [0.1.1] - 2026-08-03
 
 ### Changed
