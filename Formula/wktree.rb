@@ -2,8 +2,8 @@ class Wktree < Formula
   desc "Deterministic git worktree manager"
   homepage "https://github.com/codethread/wktree"
   url "https://github.com/codethread/wktree.git",
-      tag:      "v0.1.0",
-      revision: "aab5320659becc9491939d4e0aac1ca97caee44e"
+      tag:      "v0.1.1",
+      revision: "71de66da4a041b89036f090c94fbc354a7ce2584"
 
   depends_on "bun"
   depends_on "git"
@@ -15,7 +15,7 @@ class Wktree < Formula
 
     (bin/"wktree").write <<~EOS
       #!/usr/bin/env bash
-      exec "#{Formula["bun"].opt_bin}/bun" run "#{libexec}/bin/wktree.ts" "$@"
+      exec "#{formula_opt_bin("bun")}/bun" run "#{libexec}/bin/wktree.ts" "$@"
     EOS
   end
 
