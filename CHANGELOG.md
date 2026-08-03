@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.1] - 2026-08-03
+
+### Changed
+
+- Added the squash-aware cleanup command to the CLI's common workflows help.
+
 ## [0.2.0] - 2026-08-03
 
 ### Added

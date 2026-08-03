@@ -11,7 +11,7 @@ export async function main(argv: string[] = Bun.argv, deps: Deps = createLiveDep
 	const program = new Command();
 	program
 		.name("wktree")
-		.version("0.2.0")
+		.version("0.2.1")
 		.summary("Manage git worktrees deterministically")
 		.description(
 			"Deterministic git worktree lifecycle engine for humans, agents, shells, and tmux wrappers.",
