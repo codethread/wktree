@@ -411,7 +411,15 @@ async function addPooledWorktree(options: {
 		if (!selected.initialized) throw new BlockedError(`pool slot is not initialized: ${selected.path}`);
 		let targetSlot = selected;
 		if (!targetSlot.placeholder) {
-			await recycleSlot({git: deps.git, project, root, slotPath: targetSlot.path, force, keepBranch: false});
+			await recycleSlot({
+				git: deps.git,
+				project,
+				root,
+				slotPath: targetSlot.path,
+				force,
+				keepBranch: false,
+				integratedInto: null,
+			});
 			state = await buildPoolState(project, await listWorktrees(deps.git, root), deps.git);
 			targetSlot = state.slots.find((candidate) => candidate.index === selected.index) ?? targetSlot;
 		}
@@ -444,7 +452,15 @@ async function addPooledWorktree(options: {
 		const confirmed = await deps.picker.confirm(await buildRecycleConfirmPrompt(deps.git, selected));
 		if (!confirmed) throw new PickerCancelled();
 	}
-	await recycleSlot({git: deps.git, project, root, slotPath: selected.path, force: true, keepBranch: false});
+	await recycleSlot({
+		git: deps.git,
+		project,
+		root,
+		slotPath: selected.path,
+		force: true,
+		keepBranch: false,
+		integratedInto: null,
+	});
 	state = await buildPoolState(project, await listWorktrees(deps.git, root), deps.git);
 	const recycled = state.slots.find((candidate) => candidate.index === selected.index);
 	if (!recycled) throw new WktreeError(`pool slot disappeared after recycle: ${selected.path}`);
@@ -680,10 +696,20 @@ async function removeCommand(args: string[], deps: Deps) {
 	const self = typeof opts.self === "string" ? opts.self : null;
 	const force = opts.force === true;
 	const keepBranch = opts["keep-branch"] === true;
+	const integratedInto = typeof opts["integrated-into"] === "string" ? opts["integrated-into"] : null;
 	const skipPreRemoteCheck =
 		opts["skip-pre-remote-check"] === true && process.env.WKTREE_INTERNAL_ROLLBACK === "1";
 	if ((branch && self) || (!branch && !self)) {
 		throw new UsageError("provide exactly one of --branch or --self");
+	}
+	if (integratedInto && keepBranch) {
+		throw new UsageError("--integrated-into cannot be combined with --keep-branch");
+	}
+	if (integratedInto && force) {
+		throw new UsageError("--integrated-into cannot be combined with --force");
+	}
+	if (integratedInto && !integratedInto.startsWith("origin/")) {
+		throw new UsageError("--integrated-into must name an origin remote-tracking ref");
 	}
 
 	let targetPath: string | undefined;
@@ -693,10 +719,11 @@ async function removeCommand(args: string[], deps: Deps) {
 		if (!canonical) throw new WktreeError("couldn't determine canonical worktree");
 		const config = readConfig();
 		const project = findProjectForRoot(config, canonical.path);
+		if ((integratedInto || project?.poolSize) && !skipPreRemoteCheck) {
+			await runPreRemoteCheck({config, root: canonical.path, operation: "wktree remove"});
+		}
+		if (integratedInto) await machineDeps.git.run(["-C", canonical.path, "fetch", "origin"]);
 		if (project?.poolSize) {
-			if (!skipPreRemoteCheck) {
-				await runPreRemoteCheck({config, root: canonical.path, operation: "wktree remove"});
-			}
 			await ensurePool(project, machineDeps, worktrees, config);
 			worktrees = await listWorktrees(machineDeps.git, cwd);
 		}
@@ -713,12 +740,24 @@ async function removeCommand(args: string[], deps: Deps) {
 				slotPath: target.path,
 				force,
 				keepBranch,
+				integratedInto,
 			});
 			return finalizeStructuredResult(toRemovePayload({worktreePath: target.path, removed: false}), output);
 		}
 
-		if (target.branch && !force && !keepBranch)
-			await assertBranchSafelyDeletable(machineDeps.git, canonical.path, target.branch);
+		if (target.branch && !force && !keepBranch) {
+			if (integratedInto) {
+				await assertBranchIntegratedInto({
+					git: machineDeps.git,
+					root: canonical.path,
+					worktreePath: target.path,
+					branch: target.branch,
+					integratedInto,
+				});
+			} else {
+				await assertBranchSafelyDeletable(machineDeps.git, canonical.path, target.branch);
+			}
+		}
 		await machineDeps.git.run([
 			"-C",
 			canonical.path,
@@ -728,7 +767,13 @@ async function removeCommand(args: string[], deps: Deps) {
 			target.path,
 		]);
 		if (target.branch && !keepBranch) {
-			await machineDeps.git.run(["-C", canonical.path, "branch", force ? "-D" : "-d", target.branch]);
+			await machineDeps.git.run([
+				"-C",
+				canonical.path,
+				"branch",
+				force || integratedInto ? "-D" : "-d",
+				target.branch,
+			]);
 		}
 
 		return finalizeStructuredResult(
@@ -1021,8 +1066,9 @@ async function recycleSlot(options: {
 	slotPath: string;
 	force: boolean;
 	keepBranch: boolean;
+	integratedInto: string | null;
 }): Promise<void> {
-	const {git, project, root, slotPath, force, keepBranch} = options;
+	const {git, project, root, slotPath, force, keepBranch, integratedInto} = options;
 	const normalizedSlotPath = normalizeExistingPath(slotPath);
 	const worktrees = await listWorktrees(git, root);
 	const state = await buildPoolState(project, worktrees, git);
@@ -1041,10 +1087,22 @@ async function recycleSlot(options: {
 
 	const dirty = (await git.runRaw(["-C", slot.path, "status", "--porcelain=v1"])).stdout.trim() !== "";
 	if (dirty) throw new DirtySlotError(`slot ${slot.path} has uncommitted changes; pass --force to recycle`);
-	if (oldBranch && oldBranch !== placeholderBranch && !keepBranch)
-		await assertBranchHasMergedUpstream(git, root, oldBranch);
+	if (oldBranch && oldBranch !== placeholderBranch && !keepBranch) {
+		if (integratedInto) {
+			await assertBranchIntegratedInto({
+				git,
+				root,
+				worktreePath: slot.path,
+				branch: oldBranch,
+				integratedInto,
+			});
+		} else {
+			await assertBranchHasMergedUpstream(git, root, oldBranch);
+		}
+	}
 	await git.run(["-C", slot.path, "checkout", "-B", placeholderBranch, `origin/${state.trunk}`]);
-	if (oldBranch && oldBranch !== placeholderBranch && !keepBranch) await git.run(["-C", root, "branch", "-d", oldBranch]);
+	if (oldBranch && oldBranch !== placeholderBranch && !keepBranch)
+		await git.run(["-C", root, "branch", integratedInto ? "-D" : "-d", oldBranch]);
 }
 
 async function cleanupFinishedWorktree(options: {
@@ -1164,6 +1222,52 @@ function resolveRemoveTarget(
 	if (normalizeExistingPath(target.path) === normalizeExistingPath(canonicalRoot))
 		throw new CanonicalRootError("refusing to remove canonical root");
 	return target;
+}
+
+async function assertBranchIntegratedInto(options: {
+	git: GitRunner;
+	root: string;
+	worktreePath: string;
+	branch: string;
+	integratedInto: string;
+}): Promise<void> {
+	const {git, root, worktreePath, branch, integratedInto} = options;
+	const dirty = await git.runRaw(["-C", worktreePath, "status", "--porcelain=v1"]);
+	if (dirty.stdout.trim() !== "") {
+		throw new DirtyWorktreeError(`worktree ${worktreePath} has uncommitted changes`);
+	}
+
+	const source = await resolveCommitRef(git, root, `refs/heads/${branch}`, "source branch");
+	const target = await resolveCommitRef(git, root, integratedInto, "--integrated-into");
+	if (source === target) {
+		throw new UnmergedBranchError(`branch ${branch} cannot be proven integrated into itself`);
+	}
+	const mergeBase = await git.runRaw(["-C", root, "merge-base", source, target]);
+	if (mergeBase.exitCode !== 0 || mergeBase.stdout.trim() === "") {
+		throw new UnmergedBranchError(`branch ${branch} and ${integratedInto} have no common ancestor`);
+	}
+	const base = mergeBase.stdout.trim();
+	const changedPaths = await git.runRaw(["-C", root, "diff", "--name-only", "-z", base, source]);
+	const paths = changedPaths.stdout.split("\0").filter((path) => path !== "");
+	if (paths.length === 0) {
+		throw new UnmergedBranchError(`branch ${branch} has no changes to prove integrated`);
+	}
+	const equivalent = await git.runRaw(["-C", root, "diff", "--quiet", source, target, "--", ...paths]);
+	if (equivalent.exitCode === 0) return;
+	if (equivalent.exitCode === 1) {
+		throw new UnmergedBranchError(
+			`branch ${branch} is not content-equivalent to ${integratedInto}; refusing to remove it`,
+		);
+	}
+	throw new WktreeError(`could not compare branch ${branch} with ${integratedInto}: ${equivalent.stderr.trim()}`);
+}
+
+async function resolveCommitRef(git: GitRunner, root: string, ref: string, label: string): Promise<string> {
+	const resolved = await git.runRaw(["-C", root, "rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`]);
+	if (resolved.exitCode !== 0 || resolved.stdout.trim() === "") {
+		throw new UsageError(`${label} must name an existing commit: ${ref}`);
+	}
+	return resolved.stdout.trim();
 }
 
 async function assertBranchSafelyDeletable(git: GitRunner, root: string, branch: string): Promise<void> {

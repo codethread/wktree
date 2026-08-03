@@ -2038,6 +2038,87 @@ integrationDescribe("wktree non-pool remove", () => {
 		).not.toBe(0);
 	});
 
+	test("removes a clean squash-integrated branch after fetching its claimed target", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/squash", "--json"], deps);
+		await commitFile({
+			repo: `${root}__feature--squash`,
+			path: "work.txt",
+			content: "work\n",
+			message: "feature work",
+		});
+		await commitOnRemoteDefault({remote, path: "work.txt", content: "work\n", message: "squash feature"});
+		await commitOnRemoteDefault({remote, path: "later.txt", content: "later\n", message: "later work"});
+
+		const result = await dispatch(
+			"remove",
+			["--cwd", root, "--branch", "feature/squash", "--integrated-into", "origin/main", "--json"],
+			deps,
+		);
+
+		expect(result.exitCode).toBe(0);
+		expect(existsSync(`${root}__feature--squash`)).toBe(false);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/squash"])).exitCode,
+		).not.toBe(0);
+	});
+
+	test("refuses squash-aware removal when the target lacks source content", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/not-integrated", "--json"], deps);
+		await commitFile({
+			repo: `${root}__feature--not-integrated`,
+			path: "work.txt",
+			content: "work\n",
+			message: "feature work",
+		});
+
+		const result = await dispatch(
+			"remove",
+			["--cwd", root, "--branch", "feature/not-integrated", "--integrated-into", "origin/main", "--json"],
+			deps,
+		);
+
+		expect(result.exitCode).toBe(EXIT_CODES.UNSAFE);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			kind: "blocked",
+			reason: "unmerged_branch",
+			branch: "feature/not-integrated",
+			worktree_path: `${root}__feature--not-integrated`,
+		});
+		expect(existsSync(`${root}__feature--not-integrated`)).toBe(true);
+	});
+
+	test("refuses squash-aware removal of a dirty worktree", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/dirty-squash", "--json"], deps);
+		await commitFile({
+			repo: `${root}__feature--dirty-squash`,
+			path: "work.txt",
+			content: "work\n",
+			message: "feature work",
+		});
+		await commitOnRemoteDefault({remote, path: "work.txt", content: "work\n", message: "squash feature"});
+		writeFileSync(join(`${root}__feature--dirty-squash`, "uncommitted.txt"), "keep\n");
+
+		const result = await dispatch(
+			"remove",
+			["--cwd", root, "--branch", "feature/dirty-squash", "--integrated-into", "origin/main", "--json"],
+			deps,
+		);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			kind: "blocked",
+			reason: "dirty_worktree",
+			branch: "feature/dirty-squash",
+		});
+		expect(existsSync(join(`${root}__feature--dirty-squash`, "uncommitted.txt"))).toBe(true);
+	});
+
 	test("keep-branch removes a clean unmerged worktree and preserves its branch", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeConfig(tmp, root, "echo ready");
@@ -2842,6 +2923,28 @@ integrationDescribe("pooled wktree remove", () => {
 				path: `${root}__feat1`,
 			},
 		});
+	});
+
+	test("recycles a clean squash-integrated slot and deletes its branch", async () => {
+		const {root, remote} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", 1);
+		await dispatch("add", ["--cwd", root, "--branch", "feature/squash", "--json"], testDeps());
+		await commitFile({repo: `${root}__feat1`, path: "work.txt", content: "work\n", message: "feature work"});
+		await commitOnRemoteDefault({remote, path: "work.txt", content: "work\n", message: "squash feature"});
+
+		const result = await dispatch(
+			"remove",
+			["--cwd", root, "--branch", "feature/squash", "--integrated-into", "origin/main", "--json"],
+			testDeps(),
+		);
+
+		expect(result.exitCode).toBe(0);
+		expect((await run(["git", "-C", `${root}__feat1`, "branch", "--show-current"])).stdout.trim()).toBe(
+			"wk-pool/feat1",
+		);
+		expect(
+			(await runRaw(["git", "-C", root, "show-ref", "--verify", "refs/heads/feature/squash"])).exitCode,
+		).not.toBe(0);
 	});
 
 	test("keep-branch recycles a clean unmerged slot and preserves its branch", async () => {

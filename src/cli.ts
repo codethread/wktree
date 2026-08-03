@@ -165,6 +165,7 @@ Blocked outcomes:
 		.option("--json", "Machine-readable output")
 		.option("--force", "Force removal")
 		.option("--keep-branch", "Remove/free worktree without deleting branch")
+		.option("--integrated-into <origin/ref>", "Delete a clean branch only after proving its content is in this fetched ref")
 		.option("--skip-pre-remote-check", "Skip configured pre-remote check")
 		.addHelpText(
 			"after",
@@ -178,7 +179,11 @@ Safety:
   The canonical root is protected. Without --force, removal refuses dirty or
   otherwise ambiguous work. Without --keep-branch, it also refuses ahead,
   local-only, or unmerged branches. --keep-branch removes only the clean
-  checkout/slot occupancy and leaves the branch ref intact.
+  checkout/slot occupancy and leaves the branch ref intact. For a clean branch
+  squash-merged by a hosting platform, --integrated-into origin/main fetches the
+  target and requires its source-relative changes to be content-equivalent before
+  removing both checkout and branch. It cannot be combined with --force or
+  --keep-branch.
 
 Related:
   finish can integrate a completed worktree and then clean it up as one

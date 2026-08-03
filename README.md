@@ -84,8 +84,10 @@ wktree add --branch feature/example
 wktree list
 wktree path --branch feature/example
 wktree remove --branch feature/example
-# Remove a clean checkout while retaining its branch (for example, after a squash merge)
+# Remove a clean checkout while retaining its branch
 wktree remove --branch feature/example --keep-branch
+# Delete a clean branch after proving a squash merge into the fetched target
+wktree remove --branch feature/example --integrated-into origin/main
 ```
 
 For scripts and agents, prefer JSON where available and branch on the payload `kind`:
