@@ -39,6 +39,7 @@ Common flows:
   wktree list --json
   wktree path --branch <feature>
   wktree remove --branch <feature> --json
+  wktree remove --branch <feature> --integrated-into origin/main --json
   wktree finish --json
   wktree config explain --json
 
