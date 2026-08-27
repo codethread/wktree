@@ -345,13 +345,15 @@ export def "wk list" [
     }
 }
 
-# Fuzzy-pick a worktree in the current repository and switch/open it via the tmux workflow.
+# Fuzzy-pick a worktree in the current repository.
 # Shows existing tmux pane previews when a worktree is already open; otherwise previews recent git log.
-export def --env "wk switch" [] {
+def pick-worktree [
+    --local # run fzf directly in the current pane instead of opening a tmux popup
+] {
     let git_check = git rev-parse --git-dir | complete
     if $git_check.exit_code != 0 {
         ^tmux display-message "not in a git repository"
-        return
+        return null
     }
 
     let worktrees = (wk list --json)
@@ -360,7 +362,7 @@ export def --env "wk switch" [] {
 
     if ($others | is-empty) {
         ^tmux display-message "only one worktree (current)"
-        return
+        return null
     }
 
     # build map of pane_current_path -> pane_id from live tmux panes
@@ -378,27 +380,58 @@ export def --env "wk switch" [] {
 		$"($marker) ($branch)\t($pane_id)\t($wt.path)\t($branch)"
 	}
 
-    let result = (
-		$candidates
-		| str join "\n"
-		| fzf-tmux -p -w 80% -h 70%
-			--prompt "Worktree > "
-			--delimiter $"\t"
-			--with-nth 1
-			--preview "bash -c 'p={2}; [ -n \"$p\" ] && tmux capture-pane -ep -t \"$p\" 2>/dev/null || git -C \"{3}\" log --oneline -20 2>/dev/null'"
-			--preview-window "down,70%,wrap"
-		| complete
-	)
+    let input = $candidates | str join "\n"
+    let result = if $local {
+        (
+            $input
+            | fzf
+                --prompt "Worktree > "
+                --delimiter $"\t"
+                --with-nth 1
+            | complete
+        )
+    } else {
+        (
+            $input
+            | fzf-tmux -p -w 80% -h 70%
+                --prompt "Worktree > "
+                --delimiter $"\t"
+                --with-nth 1
+                --preview "bash -c 'p={2}; [ -n \"$p\" ] && tmux capture-pane -ep -t \"$p\" 2>/dev/null || git -C \"{3}\" log --oneline -20 2>/dev/null'"
+                --preview-window "down,70%,wrap"
+            | complete
+        )
+    }
 
     match $result.exit_code {
         0 => {
             let line = $result.stdout | str trim
             let parts = $line | split column "\t"
-            let path = $parts | get column2.0
-            let branch = $parts | get column3.0
-            wk-open-dir $path $branch
+            {
+                path: ($parts | get column2.0)
+                branch: ($parts | get column3.0)
+            }
         }
-        130 | 1 => { }
-        _ => { print $"(ansi red)fzf error ($result.exit_code)(ansi reset)" }
+        130 | 1 => { null }
+        _ => {
+            print $"(ansi red)fzf error ($result.exit_code)(ansi reset)"
+            null
+        }
+    }
+}
+
+# Fuzzy-pick a worktree and switch/open it via the tmux workflow.
+export def --env "wk switch" [] {
+    let selected = pick-worktree
+    if $selected != null {
+        wk-open-dir $selected.path $selected.branch
+    }
+}
+
+# Fuzzy-pick a worktree and change the current shell's directory to it.
+export def --env "wk select" [] {
+    let selected = pick-worktree --local
+    if $selected != null {
+        cd $selected.path
     }
 }
