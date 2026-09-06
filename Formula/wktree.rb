@@ -2,8 +2,8 @@ class Wktree < Formula
   desc "Deterministic git worktree manager"
   homepage "https://github.com/codethread/wktree"
   url "https://github.com/codethread/wktree.git",
-      tag:      "v0.2.1",
-      revision: "f40979e1744ffd822cc42ef6b273fcefca772581"
+      tag:      "v0.3.0",
+      revision: "988ff2c122f76edb6cbc28c11e2651a6f0ac386d"
 
   depends_on "bun"
   depends_on "git"
