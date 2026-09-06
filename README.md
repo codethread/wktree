@@ -113,7 +113,7 @@ Config is optional. Without it, `wktree` still creates deterministic sibling wor
 Config is read from:
 
 ```text
-${XDG_CONFIG_HOME:-~/.config}/ct-worktrees/trees.toml
+${XDG_CONFIG_HOME:-~/.config}/wktree.toml
 ```
 
 Resolution order:

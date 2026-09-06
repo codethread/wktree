@@ -184,9 +184,9 @@ function writeConfig(spec: {
 	poolSize?: number;
 	copyToml?: string;
 }) {
-	mkdirSync(join(spec.configHome, "ct-worktrees"), {recursive: true});
+	mkdirSync(spec.configHome, {recursive: true});
 	writeFileSync(
-		join(spec.configHome, "ct-worktrees/trees.toml"),
+		join(spec.configHome, "wktree.toml"),
 		`[[project]]\nroot = ${JSON.stringify(spec.root)}\ncommand = '''\n${spec.command}\n'''\n${spec.poolSize ? `pool_size = ${spec.poolSize}\n` : ""}${spec.copyToml ?? ""}`,
 	);
 }

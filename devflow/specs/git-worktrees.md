@@ -1,7 +1,7 @@
 # Git Worktrees Engine
 
 **Status:** Implemented
-**Last Updated:** 2026-08-03
+**Last Updated:** 2026-09-06
 
 ## 1. Overview
 
@@ -464,7 +464,7 @@ is not enabled, the corresponding action is absent.
 
 ### Config
 
-Config is read from `ct-worktrees/trees.toml` under XDG config home. Project entries define
+Config is read from `wktree.toml` under XDG config home. Project entries define
 exact canonical roots for bootstrap, pools, copy setup, and exact policy overrides. Policy
 configuration also supports defaults and root-glob rules that can affect repositories without
 requiring bootstrap setup.

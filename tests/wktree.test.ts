@@ -658,9 +658,9 @@ integrationDescribe("wktree non-pool add", () => {
 	test("uses inherited rule command for a repo without exact project config", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		const configHome = join(tmp, "config-rule-command");
-		mkdirSync(join(configHome, "ct-worktrees"), {recursive: true});
+		mkdirSync(configHome, {recursive: true});
 		writeFileSync(
-			join(configHome, "ct-worktrees", "trees.toml"),
+			join(configHome, "wktree.toml"),
 			`[[rule]]\nroot_glob = "${realpathSync(tmp)}/**"\ncommand = '''\necho inherited > "$WK_CREATED/rule-sentinel"\n'''\n`,
 		);
 		process.env.XDG_CONFIG_HOME = configHome;
@@ -2298,11 +2298,8 @@ integrationDescribe("wktree read-only commands", () => {
 		await initRepo(root);
 		root = realpathSync(root);
 		const configHome = join(tmp, "config");
-		mkdirSync(join(configHome, "ct-worktrees"), {recursive: true});
-		writeFileSync(
-			join(configHome, "ct-worktrees", "trees.toml"),
-			`[[project]]\nroot = "${root}"\ncommand = "echo ready"\n`,
-		);
+		mkdirSync(configHome, {recursive: true});
+		writeFileSync(join(configHome, "wktree.toml"), `[[project]]\nroot = "${root}"\ncommand = "echo ready"\n`);
 		process.env.XDG_CONFIG_HOME = configHome;
 
 		const rootResult = await dispatch("root", ["--cwd", root], deps);
@@ -2335,9 +2332,9 @@ integrationDescribe("wktree read-only commands", () => {
 		await initRepo(root);
 		root = realpathSync(root);
 		const configHome = join(tmp, "config-explain");
-		mkdirSync(join(configHome, "ct-worktrees"), {recursive: true});
+		mkdirSync(configHome, {recursive: true});
 		writeFileSync(
-			join(configHome, "ct-worktrees", "trees.toml"),
+			join(configHome, "wktree.toml"),
 			`[defaults.finish]\nstrategy = "rebase_ff"\n\n[[rule]]\nroot_glob = "${realpathSync(tmp)}/**"\n[rule.add]\npolicy = "fresh_canonical"\n[rule.finish]\npush = true\n\n[[project]]\nname = "repo"\nroot = "${root}"\n[project.finish]\ndelete_branch = true\n`,
 		);
 		process.env.XDG_CONFIG_HOME = configHome;
@@ -2369,8 +2366,8 @@ integrationDescribe("wktree read-only commands", () => {
 		await initRepo(root);
 		root = realpathSync(root);
 		const configHome = join(tmp, "config");
-		mkdirSync(join(configHome, "ct-worktrees"), {recursive: true});
-		writeFileSync(join(configHome, "ct-worktrees", "trees.toml"), "[[project]]\nroot = ");
+		mkdirSync(configHome, {recursive: true});
+		writeFileSync(join(configHome, "wktree.toml"), "[[project]]\nroot = ");
 		process.env.XDG_CONFIG_HOME = configHome;
 
 		await expect(dispatch("list", ["--cwd", root], deps)).rejects.toThrow(ConfigError);
@@ -2383,9 +2380,9 @@ integrationDescribe("wktree read-only commands", () => {
 		await run(["git", "-C", root, "worktree", "add", `${root}__feat1`, "wk-pool/feat1"]);
 		await run(["git", "-C", root, "worktree", "lock", "--reason", "keep slot", `${root}__feat1`]);
 		const configHome = join(tmp, "config");
-		mkdirSync(join(configHome, "ct-worktrees"), {recursive: true});
+		mkdirSync(configHome, {recursive: true});
 		writeFileSync(
-			join(configHome, "ct-worktrees", "trees.toml"),
+			join(configHome, "wktree.toml"),
 			`[[project]]\nroot = "${configRoot}"\ncommand = "echo ready"\npool_size = 1\n`,
 		);
 		process.env.XDG_CONFIG_HOME = configHome;
@@ -3268,9 +3265,9 @@ function writeConfig(
 ) {
 	const [tmp, root, command, poolSize, copyToml] = args;
 	const configHome = join(tmp, "config");
-	mkdirSync(join(configHome, "ct-worktrees"), {recursive: true});
+	mkdirSync(configHome, {recursive: true});
 	writeFileSync(
-		join(configHome, "ct-worktrees", "trees.toml"),
+		join(configHome, "wktree.toml"),
 		`[[project]]\nroot = "${root}"\ncommand = '''\n${command}\n'''\n${poolSize ? `pool_size = ${poolSize}\n` : ""}${copyToml ?? ""}`,
 	);
 	process.env.XDG_CONFIG_HOME = configHome;

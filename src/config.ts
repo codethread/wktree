@@ -32,11 +32,11 @@ export function parseConfig(toml: string): TreesConfig {
 		raw = TOML.parse(toml);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new ConfigError(`Invalid TOML in trees.toml: ${message}`);
+		throw new ConfigError(`Invalid TOML in wktree.toml: ${message}`);
 	}
 
 	if (!isRecord(raw)) {
-		throw new ConfigError("Invalid trees.toml: expected a top-level TOML table");
+		throw new ConfigError("Invalid wktree.toml: expected a top-level TOML table");
 	}
 
 	if ("post_create" in raw) {
@@ -47,10 +47,10 @@ export function parseConfig(toml: string): TreesConfig {
 
 	const rawProjects = raw.project ?? [];
 	if (!Array.isArray(rawProjects)) {
-		throw new ConfigError("Invalid trees.toml: [[project]] must be an array of tables");
+		throw new ConfigError("Invalid wktree.toml: [[project]] must be an array of tables");
 	}
 	const rawRules = raw.rule ?? [];
-	if (!Array.isArray(rawRules)) throw new ConfigError("Invalid trees.toml: [[rule]] must be an array of tables");
+	if (!Array.isArray(rawRules)) throw new ConfigError("Invalid wktree.toml: [[rule]] must be an array of tables");
 
 	if (raw.defaults !== undefined && !isRecord(raw.defaults)) {
 		throw new ConfigError("[defaults] must be a TOML table");
@@ -193,7 +193,7 @@ function isFinishStrategy(value: unknown): value is FinishStrategy {
 
 export function readConfig(): TreesConfig {
 	const configHome = process.env.XDG_CONFIG_HOME ?? resolve(homedir(), ".config");
-	const configPath = resolve(configHome, "ct-worktrees", "trees.toml");
+	const configPath = resolve(configHome, "wktree.toml");
 	if (!existsSync(configPath)) return {projects: [], rules: [], defaults: {}};
 	return parseConfig(readFileSync(configPath, "utf8"));
 }
