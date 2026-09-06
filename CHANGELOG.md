@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.0] - 2026-09-06
+
+### Added
+
+- `wk select` fuzzy-picks a worktree and changes the current Nushell directory to it, without opening a tmux session.
+
+### Changed
+
+- Config is now read from `${XDG_CONFIG_HOME:-~/.config}/wktree.toml` instead of `ct-worktrees/trees.toml`. Move an existing file to the new path before upgrading.
+
 ## [0.2.1] - 2026-08-03
 
 ### Changed
