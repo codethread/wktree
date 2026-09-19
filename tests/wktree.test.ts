@@ -69,6 +69,30 @@ describe("wktree dispatch", () => {
 });
 
 describe("parseConfig", () => {
+	test("resolves worktree location through global, rule, and project layers", () => {
+		expect(parseConfig("").worktreeLocation).toBe("sibling");
+		const config = parseConfig(`
+worktree_location = "sibling"
+
+[[rule]]
+root_glob = "/tmp/**"
+worktree_location = "nested"
+
+[[project]]
+root = "/tmp/repo"
+worktree_location = "sibling"
+`);
+		expect(explainPolicy(config, "/elsewhere").worktreeLocation).toBe("sibling");
+		expect(explainPolicy(config, "/tmp/other").worktreeLocation).toBe("nested");
+		expect(explainPolicy(config, "/tmp/repo").worktreeLocation).toBe("sibling");
+		expect(() => parseConfig('worktree_location = "elsewhere"')).toThrow(
+			'worktree_location must be "sibling" or "nested"',
+		);
+		expect(() => parseConfig('[[rule]]\nroot_glob = "/tmp/**"\nworktree_location = "elsewhere"')).toThrow(
+			'worktree_location must be "sibling" or "nested"',
+		);
+	});
+
 	test("parses a valid pooled project", () => {
 		const config = parseConfig(`
 [[project]]
@@ -447,6 +471,11 @@ describe("git worktree parsers", () => {
 		expect(worktrees[1]?.branch).toBe("wk-pool/feat1");
 		expect(worktrees[2]?.pool).toEqual({index: 2, placeholder: false});
 		expect(worktrees[2]?.branch).toBe("my-feature");
+
+		const nested = parseWorktreeList(
+			`worktree /repo\nHEAD aaa\nbranch refs/heads/main\n\nworktree /repo/.wktree/feat3\nHEAD ddd\nbranch refs/heads/wk-pool/feat3\n`,
+		);
+		expect(nested[1]?.pool).toEqual({index: 3, placeholder: true});
 	});
 
 	test("parses detached HEAD without a branch", () => {
@@ -653,6 +682,63 @@ integrationDescribe("wktree non-pool add", () => {
 		await run(["bash", plan.post_create_script_path]);
 		await run(["bash", plan.post_create_script_path]);
 		expect(readFileSync(join(worktreePath, "hook-sentinel"), "utf8")).toBe("hook\n");
+	});
+
+	test("creates nested worktrees under the canonical root without dirtying it", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		const configHome = join(tmp, "config-nested");
+		mkdirSync(configHome, {recursive: true});
+		writeFileSync(
+			join(configHome, "wktree.toml"),
+			`worktree_location = "sibling"\n\n[[project]]\nroot = "${root}"\nworktree_location = "nested"\n`,
+		);
+		process.env.XDG_CONFIG_HOME = configHome;
+		const worktreePath = join(root, ".wktree", "feature--nested");
+
+		const pathResult = await dispatch("path", ["--cwd", root, "--branch", "feature/nested"], deps);
+		const addResult = await dispatch("add", ["--cwd", root, "--branch", "feature/nested", "--json"], deps);
+
+		expect(pathResult.stdout).toBe(`${worktreePath}\n`);
+		expect(JSON.parse(addResult.stdout ?? "{}")).toMatchObject({
+			worktree_path: worktreePath,
+			session: {name: "repo__feature--nested", path: worktreePath},
+		});
+		expect(existsSync(join(worktreePath, ".git"))).toBe(true);
+		expect((await run(["git", "-C", root, "status", "--porcelain"])).stdout).toBe("");
+	});
+
+	test("keeps legacy and manual worktrees discoverable after changing location", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		const configHome = join(tmp, "config-mixed-layout");
+		mkdirSync(configHome, {recursive: true});
+		process.env.XDG_CONFIG_HOME = configHome;
+		writeFileSync(join(configHome, "wktree.toml"), 'worktree_location = "sibling"\n');
+		await dispatch("add", ["--cwd", root, "--branch", "feature/legacy", "--json"], deps);
+		const legacyPath = `${root}__feature--legacy`;
+		let manualPath = join(tmp, "manual-worktree");
+		await run(["git", "-C", root, "worktree", "add", "-b", "feature/manual", manualPath]);
+		manualPath = realpathSync(manualPath);
+
+		writeFileSync(join(configHome, "wktree.toml"), 'worktree_location = "nested"\n');
+		const nestedPath = join(root, ".wktree", "feature--new");
+		await dispatch("add", ["--cwd", root, "--branch", "feature/new", "--json"], deps);
+
+		expect((await dispatch("path", ["--cwd", root, "--branch", "feature/legacy"], deps)).stdout).toBe(
+			`${legacyPath}\n`,
+		);
+		expect((await dispatch("path", ["--cwd", root, "--branch", "feature/manual"], deps)).stdout).toBe(
+			`${manualPath}\n`,
+		);
+		const listed = JSON.parse((await dispatch("list", ["--cwd", root, "--json"], deps)).stdout ?? "[]");
+		expect(listed.map((worktree: {path: string}) => worktree.path)).toEqual(
+			expect.arrayContaining([root, legacyPath, manualPath, nestedPath]),
+		);
+		const duplicate = await dispatch("add", ["--cwd", root, "--branch", "feature/legacy", "--json"], deps);
+		expect(JSON.parse(duplicate.stdout ?? "{}")).toMatchObject({
+			kind: "blocked",
+			reason: "duplicate_branch",
+			message: expect.stringContaining(legacyPath),
+		});
 	});
 
 	test("uses inherited rule command for a repo without exact project config", async () => {
@@ -987,11 +1073,12 @@ integrationDescribe("wktree non-pool add", () => {
 			(await run(["git", "-C", `${root}__feature--from-local-base`, "show", "HEAD:local-base.txt"])).stdout,
 		).toBe("local base\n");
 
+		await run(["git", "-C", root, "branch", "feature/base-ignored"]);
 		await dispatch(
 			"add",
-			["--cwd", root, "--branch", "feature/from-base", "--base", "base/topic", "--json"],
+			["--cwd", root, "--branch", "feature/base-ignored", "--base", "base/topic", "--json"],
 			warnDeps,
-		).catch(() => undefined);
+		);
 		expect(warnings.join("\n")).toContain("--base ignored");
 	}, 15000);
 
@@ -2259,6 +2346,24 @@ integrationDescribe("wktree pool status", () => {
 		expect(state.slots[0].lastCommitSubject).toBe("initial");
 	});
 
+	test("blocks when sibling and nested worktrees claim the same pool slot", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		writeConfig(tmp, root, "echo ready", 1);
+		await createPoolSlot(root, 1, "wk-pool/feat1", true);
+		const nestedSlot = join(root, ".wktree", "feat1");
+		await run(["git", "-C", root, "branch", "feature/colliding-slot"]);
+		await run(["git", "-C", root, "worktree", "add", nestedSlot, "feature/colliding-slot"]);
+
+		const result = await dispatch("status", ["--cwd", root], deps);
+
+		expect(result.exitCode).toBe(EXIT_CODES.BLOCKED);
+		expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
+			kind: "blocked",
+			reason: "blocked",
+			message: expect.stringContaining("multiple worktrees claim pool slot feat1"),
+		});
+	});
+
 	test("gitignored files do not mark a slot dirty and non-pooled status is empty", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeConfig(tmp, root, "echo ready", 1);
@@ -2350,6 +2455,7 @@ integrationDescribe("wktree read-only commands", () => {
 			project: {name: "repo", root},
 			command: {source: null, value: null},
 			pre_remote_check: {source: null, value: null},
+			worktree_location: "sibling",
 			add: {policy: "fresh_canonical"},
 			finish: {
 				enabled: true,
@@ -2561,6 +2667,44 @@ integrationDescribe("wktree pooled add", () => {
 		).not.toBe(0);
 	});
 
+	test("keeps legacy pool slots and creates only missing slots in the preferred location", async () => {
+		const {root} = await initRepoWithOrigin(tmp);
+		const configHome = join(tmp, "config-mixed-pool");
+		mkdirSync(configHome, {recursive: true});
+		process.env.XDG_CONFIG_HOME = configHome;
+		writeFileSync(
+			join(configHome, "wktree.toml"),
+			`[[project]]\nroot = "${root}"\ncommand = "echo ready"\npool_size = 1\n`,
+		);
+		const legacySlot = `${root}__feat1`;
+		await dispatch("add", ["--cwd", root, "--branch", "feature/legacy-pool", "--json"], testDeps());
+
+		writeFileSync(
+			join(configHome, "wktree.toml"),
+			`worktree_location = "sibling"\n\n[[project]]\nroot = "${root}"\ncommand = "echo ready"\npool_size = 2\nworktree_location = "nested"\n`,
+		);
+		const nestedSlot = join(root, ".wktree", "feat2");
+		await dispatch("ensure", ["--cwd", root], testDeps());
+		const state = JSON.parse((await dispatch("status", ["--cwd", root], testDeps())).stdout ?? "{}");
+
+		expect(state.slots.map((slot: {path: string}) => slot.path)).toEqual([legacySlot, nestedSlot]);
+		expect(
+			(await dispatch("path", ["--cwd", root, "--branch", "feature/legacy-pool"], testDeps())).stdout,
+		).toBe(`${legacySlot}\n`);
+		expect(existsSync(nestedSlot)).toBe(true);
+		expect((await run(["git", "-C", root, "status", "--porcelain"])).stdout).toBe("");
+
+		const removed = await dispatch(
+			"remove",
+			["--cwd", root, "--branch", "feature/legacy-pool", "--keep-branch", "--json"],
+			testDeps(),
+		);
+		expect(JSON.parse(removed.stdout ?? "{}")).toMatchObject({worktree_path: legacySlot, removed: false});
+		expect((await run(["git", "-C", legacySlot, "branch", "--show-current"])).stdout.trim()).toBe(
+			"wk-pool/feat1",
+		);
+	});
+
 	test("allocates the lowest initialized free slot and writes a pooled post-create script", async () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeConfig(tmp, root, "touch pooled-sentinel", 2);
@@ -2689,9 +2833,16 @@ integrationDescribe("wktree pooled add", () => {
 		await dispatch("add", ["--cwd", root, "--branch", "feature/diverged-pool", "--json"], warnDeps);
 		expect(warnings.join("\n")).toContain("couldn't fast-forward");
 
-		await expect(
-			dispatch("add", ["--cwd", root, "--branch", "feature/diverged-pool", "--json"], testDeps()),
-		).rejects.toThrow(`${root}__feat1`);
+		const duplicate = await dispatch(
+			"add",
+			["--cwd", root, "--branch", "feature/diverged-pool", "--json"],
+			testDeps(),
+		);
+		expect(JSON.parse(duplicate.stdout ?? "{}")).toMatchObject({
+			kind: "blocked",
+			reason: "duplicate_branch",
+			message: expect.stringContaining(`${root}__feat1`),
+		});
 		expect((await run(["git", "-C", `${root}__feat2`, "branch", "--show-current"])).stdout.trim()).toBe(
 			"wk-pool/feat2",
 		);
@@ -2701,9 +2852,12 @@ integrationDescribe("wktree pooled add", () => {
 		const {root} = await initRepoWithOrigin(tmp);
 		writeConfig(tmp, root, "echo ready", 1);
 
-		await expect(dispatch("add", ["--cwd", root, "--branch", "main", "--json"], testDeps())).rejects.toThrow(
-			root,
-		);
+		const duplicate = await dispatch("add", ["--cwd", root, "--branch", "main", "--json"], testDeps());
+		expect(JSON.parse(duplicate.stdout ?? "{}")).toMatchObject({
+			kind: "blocked",
+			reason: "duplicate_branch",
+			message: expect.stringContaining(root),
+		});
 		await expect(
 			dispatch("add", ["--cwd", root, "--branch", "wk-pool/feat9", "--json"], testDeps()),
 		).rejects.toThrow("reserved");

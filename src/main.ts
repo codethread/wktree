@@ -80,6 +80,7 @@ import type {
 	ReadyRemovePayload,
 	RemovePlan,
 	TreesConfig,
+	WorktreeLocation,
 	SessionInfo,
 	Slot,
 	Worktree,
@@ -125,6 +126,7 @@ export type {
 	ProjectConfig,
 	Slot,
 	TreesConfig,
+	WorktreeLocation,
 	Worktree,
 } from "./types.ts";
 const USAGE = `wktree - reusable git worktree pool manager
@@ -228,16 +230,25 @@ async function pathCommand(args: string[], deps: Deps) {
 	const cwd = requireOption(opts, "cwd");
 	const branch = requireOption(opts, "branch");
 	const config = readConfig();
-	const canonicalRoot = await resolveCanonicalRoot(deps.git, cwd);
-	const project = findProjectForRoot(config, canonicalRoot);
+	const worktrees = await listWorktrees(deps.git, cwd);
+	const canonical = worktrees.find((worktree) => worktree.canonical);
+	if (!canonical) throw new WktreeError("couldn't determine canonical worktree");
+	const existing = worktrees.find((worktree) => worktree.branch === branch);
+	if (existing) return {stdout: `${existing.path}\n`, exitCode: 0};
+
+	const project = findProjectForRoot(config, canonical.path);
+	const worktreeLocation = explainPolicy(config, canonical.path).worktreeLocation;
 	if (project?.poolSize) {
-		await runPreRemoteCheck({config, root: canonicalRoot, operation: "wktree path"});
-		const state = await buildPoolState(project, await listWorktrees(deps.git, canonicalRoot), deps.git);
+		await runPreRemoteCheck({config, root: canonical.path, operation: "wktree path"});
+		const state = await buildPoolState(project, worktrees, deps.git, worktreeLocation);
 		const slot = state.slots.find((candidate) => candidate.branch === branch);
 		if (!slot) throw new BlockedError(`no pooled worktree found for branch ${branch}`);
 		return {stdout: `${slot.path}\n`, exitCode: 0};
 	}
-	return {stdout: `${canonicalRoot}__${encodeBranch(branch)}\n`, exitCode: 0};
+	return {
+		stdout: `${worktreePathForName(canonical.path, encodeBranch(branch), worktreeLocation)}\n`,
+		exitCode: 0,
+	};
 }
 
 async function addCommand(args: string[], deps: Deps) {
@@ -256,7 +267,13 @@ async function addCommand(args: string[], deps: Deps) {
 		const canonicalRoot = await resolveCanonicalRoot(machineDeps.git, cwd);
 		const config = readConfig();
 		const project = findProjectForRoot(config, canonicalRoot);
+		const worktreeLocation = explainPolicy(config, canonicalRoot).worktreeLocation;
 		const effectiveCommand = resolveEffectiveCommand(config, canonicalRoot);
+		const worktrees = await listWorktrees(machineDeps.git, canonicalRoot);
+		const existing = worktrees.find((worktree) => worktree.branch === branch);
+		if (existing) {
+			throw new DuplicateBranchError(`branch ${branch} is already checked out at ${existing.path}`);
+		}
 		if (slotPath && !project?.poolSize) {
 			throw new UsageError("--slot is only valid for pooled projects");
 		}
@@ -273,10 +290,11 @@ async function addCommand(args: string[], deps: Deps) {
 				base,
 				force: opts.force === true,
 				command: effectiveCommand.command,
+				worktreeLocation,
 			});
 		}
 
-		const worktreePath = `${canonicalRoot}__${encodeBranch(branch)}`;
+		const worktreePath = worktreePathForName(canonicalRoot, encodeBranch(branch), worktreeLocation);
 		if (normalizeExistingPath(worktreePath) === normalizeExistingPath(canonicalRoot)) {
 			throw new CanonicalRootError("refusing to use canonical root as worktree target");
 		}
@@ -296,6 +314,7 @@ async function addCommand(args: string[], deps: Deps) {
 			branch,
 			branchState,
 		});
+		await prepareWorktreeParent(machineDeps.git, canonicalRoot, worktreePath, worktreeLocation);
 		await addNonPoolWorktree({
 			git: machineDeps.git,
 			root: canonicalRoot,
@@ -370,8 +389,9 @@ async function addPooledWorktree(options: {
 	base: string | null;
 	force: boolean;
 	command: string | null;
+	worktreeLocation: WorktreeLocation;
 }): Promise<CommandResult> {
-	const {deps, project, config, root, branch, slotPath, output, base, force, command} = options;
+	const {deps, project, config, root, branch, slotPath, output, base, force, command, worktreeLocation} = options;
 	let worktrees = await listWorktrees(deps.git, root);
 	for (const worktree of worktrees) {
 		if (worktree.branch === branch) {
@@ -401,7 +421,7 @@ async function addPooledWorktree(options: {
 			throw new DuplicateBranchError(`branch ${branch} is already checked out at ${worktree.path}`);
 		}
 	}
-	let state = await buildPoolState(project, worktrees, deps.git);
+	let state = await buildPoolState(project, worktrees, deps.git, worktreeLocation);
 
 	if (slotPath) {
 		const selected = state.slots.find(
@@ -419,8 +439,14 @@ async function addPooledWorktree(options: {
 				force,
 				keepBranch: false,
 				integratedInto: null,
+				worktreeLocation,
 			});
-			state = await buildPoolState(project, await listWorktrees(deps.git, root), deps.git);
+			state = await buildPoolState(
+				project,
+				await listWorktrees(deps.git, root),
+				deps.git,
+				worktreeLocation,
+			);
 			targetSlot = state.slots.find((candidate) => candidate.index === selected.index) ?? targetSlot;
 		}
 		return finalizeStructuredResult(
@@ -460,8 +486,14 @@ async function addPooledWorktree(options: {
 		force: true,
 		keepBranch: false,
 		integratedInto: null,
+		worktreeLocation,
 	});
-	state = await buildPoolState(project, await listWorktrees(deps.git, root), deps.git);
+	state = await buildPoolState(
+		project,
+		await listWorktrees(deps.git, root),
+		deps.git,
+		worktreeLocation,
+	);
 	const recycled = state.slots.find((candidate) => candidate.index === selected.index);
 	if (!recycled) throw new WktreeError(`pool slot disappeared after recycle: ${selected.path}`);
 	return finalizeStructuredResult(
@@ -613,7 +645,8 @@ async function statusCommand(args: string[], deps: Deps) {
 			};
 		}
 		await runPreRemoteCheck({config, root: canonical.path, operation: "wktree status"});
-		const state = await buildPoolState(project, worktrees, deps.git);
+		const worktreeLocation = explainPolicy(config, canonical.path).worktreeLocation;
+		const state = await buildPoolState(project, worktrees, deps.git, worktreeLocation);
 		return {stdout: `${JSON.stringify(state, null, 2)}\n`, exitCode: 0};
 	} catch (error) {
 		const blocked = toBlockedCommandResult(error, output, {});
@@ -626,6 +659,7 @@ export async function buildPoolState(
 	cfg: ProjectConfig,
 	worktrees: Worktree[],
 	git: GitRunner,
+	location: WorktreeLocation = cfg.worktreeLocation ?? "sibling",
 ): Promise<PoolState> {
 	if (!cfg.poolSize) throw new ConfigError(`project ${cfg.name ?? cfg.root} is not pooled`);
 	const root = normalizeExistingPath(cfg.root);
@@ -635,6 +669,7 @@ export async function buildPoolState(
 			buildPoolSlotState({
 				index: offset + 1,
 				root,
+				location,
 				worktrees,
 				git,
 			}),
@@ -646,12 +681,21 @@ export async function buildPoolState(
 async function buildPoolSlotState(options: {
 	index: number;
 	root: string;
+	location: WorktreeLocation;
 	worktrees: Worktree[];
 	git: GitRunner;
 }): Promise<Slot> {
-	const {index, root, worktrees, git} = options;
-	const slotPath = `${root}__feat${index}`;
-	const worktree = worktrees.find((candidate) => normalizeExistingPath(candidate.path) === slotPath);
+	const {index, root, location, worktrees, git} = options;
+	const matches = worktrees.filter(
+		(candidate) => !candidate.canonical && candidate.pool?.index === index,
+	);
+	if (matches.length > 1) {
+		throw new BlockedError(
+			`multiple worktrees claim pool slot feat${index}: ${matches.map((candidate) => candidate.path).join(", ")}`,
+		);
+	}
+	const worktree = matches[0];
+	const slotPath = worktree?.path ?? worktreePathForName(root, `feat${index}`, location);
 	if (!worktree) {
 		return {
 			index,
@@ -719,6 +763,7 @@ async function removeCommand(args: string[], deps: Deps) {
 		if (!canonical) throw new WktreeError("couldn't determine canonical worktree");
 		const config = readConfig();
 		const project = findProjectForRoot(config, canonical.path);
+		const worktreeLocation = explainPolicy(config, canonical.path).worktreeLocation;
 		if ((integratedInto || project?.poolSize) && !skipPreRemoteCheck) {
 			await runPreRemoteCheck({config, root: canonical.path, operation: "wktree remove"});
 		}
@@ -741,6 +786,7 @@ async function removeCommand(args: string[], deps: Deps) {
 				force,
 				keepBranch,
 				integratedInto,
+				worktreeLocation,
 			});
 			return finalizeStructuredResult(toRemovePayload({worktreePath: target.path, removed: false}), output);
 		}
@@ -912,6 +958,7 @@ async function finishCommand(args: string[], deps: Deps) {
 				root: canonical.path,
 				source,
 				deleteBranch,
+				worktreeLocation: explanation.worktreeLocation,
 			});
 			cleanupActions.push(source.pool ? "recycle_worktree" : "remove_worktree");
 			if (deleteBranch) cleanupActions.push("delete_branch");
@@ -952,7 +999,7 @@ async function configCommand(args: string[], deps: Deps) {
 	const matchedRules = payload.matched_rules.map((rule) => rule.root_glob).join(", ") || "(none)";
 	const project = payload.project ? `${payload.project.name ?? "(unnamed)"} ${payload.project.root}` : "(none)";
 	return {
-		stdout: `root: ${payload.root}\nmatched_rules: ${matchedRules}\nproject: ${project}\ncommand.source: ${formatCommandSource(payload.command.source)}\npre_remote_check.source: ${formatCommandSource(payload.pre_remote_check.source)}\nadd.policy: ${payload.add.policy}\nfinish.enabled: ${payload.finish.enabled}\nfinish.strategy: ${payload.finish.strategy}\nfinish.push: ${payload.finish.push}\nfinish.remove_worktree: ${payload.finish.remove_worktree}\nfinish.delete_branch: ${payload.finish.delete_branch}\n`,
+		stdout: `root: ${payload.root}\nmatched_rules: ${matchedRules}\nproject: ${project}\ncommand.source: ${formatCommandSource(payload.command.source)}\npre_remote_check.source: ${formatCommandSource(payload.pre_remote_check.source)}\nworktree_location: ${payload.worktree_location}\nadd.policy: ${payload.add.policy}\nfinish.enabled: ${payload.finish.enabled}\nfinish.strategy: ${payload.finish.strategy}\nfinish.push: ${payload.finish.push}\nfinish.remove_worktree: ${payload.finish.remove_worktree}\nfinish.delete_branch: ${payload.finish.delete_branch}\n`,
 		exitCode: EXIT_CODES.SUCCESS,
 	};
 }
@@ -973,6 +1020,7 @@ function toConfigExplainPayload(explanation: ReturnType<typeof explainPolicy>) {
 			source: explanation.preRemoteCheck.source,
 			value: explanation.preRemoteCheck.value,
 		},
+		worktree_location: explanation.worktreeLocation,
 		add: {policy: explanation.addPolicy},
 		finish: {
 			enabled: explanation.finishPolicy.enabled,
@@ -1067,11 +1115,12 @@ async function recycleSlot(options: {
 	force: boolean;
 	keepBranch: boolean;
 	integratedInto: string | null;
+	worktreeLocation: WorktreeLocation;
 }): Promise<void> {
-	const {git, project, root, slotPath, force, keepBranch, integratedInto} = options;
+	const {git, project, root, slotPath, force, keepBranch, integratedInto, worktreeLocation} = options;
 	const normalizedSlotPath = normalizeExistingPath(slotPath);
 	const worktrees = await listWorktrees(git, root);
-	const state = await buildPoolState(project, worktrees, git);
+	const state = await buildPoolState(project, worktrees, git, worktreeLocation);
 	const slot = state.slots.find((candidate) => normalizeExistingPath(candidate.path) === normalizedSlotPath);
 	if (!slot?.exists) throw new UsageError(`pool slot not found: ${slotPath}`);
 	const placeholderBranch = `wk-pool/feat${slot.index}`;
@@ -1111,13 +1160,19 @@ async function cleanupFinishedWorktree(options: {
 	root: string;
 	source: Worktree;
 	deleteBranch: boolean;
+	worktreeLocation: WorktreeLocation;
 }): Promise<void> {
-	const {git, project, root, source, deleteBranch} = options;
+	const {git, project, root, source, deleteBranch, worktreeLocation} = options;
 	if (!source.branch) throw new UsageError("finish cleanup requires a source branch");
 	const status = await git.run(["-C", source.path, "status", "--porcelain=v1"]);
 	if (status.stdout.trim() !== "") throw new DirtyWorktreeError("source worktree has uncommitted changes");
 	if (project?.poolSize && source.pool) {
-		const state = await buildPoolState(project, await listWorktrees(git, root), git);
+		const state = await buildPoolState(
+			project,
+			await listWorktrees(git, root),
+			git,
+			worktreeLocation,
+		);
 		const slot = state.slots.find((candidate) => normalizeExistingPath(candidate.path) === normalizeExistingPath(source.path));
 		if (!slot) throw new UsageError(`pool slot not found: ${source.path}`);
 		const placeholderBranch = `wk-pool/feat${slot.index}`;
@@ -1156,8 +1211,9 @@ async function ensurePool(
 	}
 	const root = normalizeExistingPath(project.root);
 	const command = resolvedCommand ?? resolveEffectiveCommand(config, root).command;
+	const worktreeLocation = explainPolicy(config, root).worktreeLocation;
 	let worktrees = initialWorktrees ?? (await listWorktrees(deps.git, root));
-	let state = await buildPoolState(project, worktrees, deps.git);
+	let state = await buildPoolState(project, worktrees, deps.git, worktreeLocation);
 	const needsWork = state.slots.some((slot) => !slot.exists || !slot.initialized);
 	if (!needsWork) return state;
 
@@ -1168,7 +1224,10 @@ async function ensurePool(
 		deps.progress.banner(`[wk-pool] initializing feat${slot.index}…`);
 		await ensurePlaceholderBranch({git: deps.git, root, branch, trunk: state.trunk});
 		const createdWorktree = !slot.exists;
-		if (createdWorktree) await deps.git.run(["-C", root, "worktree", "add", slot.path, branch]);
+		if (createdWorktree) {
+			await prepareWorktreeParent(deps.git, root, slot.path, worktreeLocation);
+			await deps.git.run(["-C", root, "worktree", "add", slot.path, branch]);
+		}
 		if (!command) throw new ConfigError(`project ${project.name ?? project.root} requires command for pooled setup`);
 		const postCreateScriptPath = writePostCreateScript({
 			projectName: project.name ?? basename(root),
@@ -1188,7 +1247,7 @@ async function ensurePool(
 			throw error;
 		}
 		worktrees = await listWorktrees(deps.git, root);
-		state = await buildPoolState(project, worktrees, deps.git);
+		state = await buildPoolState(project, worktrees, deps.git, worktreeLocation);
 	}
 	return state;
 }
@@ -1681,7 +1740,12 @@ async function toPoolFullPayload(git: GitRunner, state: PoolState, branch: strin
 }
 
 function sessionNameForWorktreePath(worktreePath: string): string {
-	return basename(worktreePath).replaceAll(".", "_");
+	const parent = dirname(worktreePath);
+	const name =
+		basename(parent) === ".wktree"
+			? `${basename(dirname(parent))}__${basename(worktreePath)}`
+			: basename(worktreePath);
+	return name.replaceAll(".", "_");
 }
 
 function toSessionInfo(worktreePath: string): SessionInfo {
@@ -1806,6 +1870,21 @@ function encodeBranch(branch: string): string {
 	return parts.join("--");
 }
 
+function worktreePathForName(root: string, name: string, location: WorktreeLocation): string {
+	return location === "nested" ? resolve(root, ".wktree", name) : `${root}__${name}`;
+}
+
+async function prepareWorktreeParent(
+	git: GitRunner,
+	root: string,
+	worktreePath: string,
+	location: WorktreeLocation,
+): Promise<void> {
+	if (location !== "nested") return;
+	await writeExcludeFence(git, root, "wktree-location", ["/.wktree/"]);
+	mkdirSync(dirname(worktreePath), {recursive: true});
+}
+
 function lstatExists(path: string): boolean {
 	try {
 		lstatSync(path);
@@ -1881,16 +1960,27 @@ async function assertDestinationUntracked(git: GitRunner, target: string, path: 
 }
 
 async function writeCopyExcludeBlock(git: GitRunner, root: string, paths: string[]): Promise<void> {
+	await writeExcludeFence(git, root, "wktree", paths);
+}
+
+async function writeExcludeFence(
+	git: GitRunner,
+	root: string,
+	name: string,
+	paths: string[],
+): Promise<void> {
 	const excludePathResult = await git.run(["-C", root, "rev-parse", "--git-path", "info/exclude"]);
 	const gitPath = resolve(root, excludePathResult.stdout.trim());
 	const excludePath = existsSync(gitPath) ? realpathSync(gitPath) : gitPath;
 	mkdirSync(dirname(excludePath), {recursive: true});
 	const current = existsSync(excludePath) ? readFileSync(excludePath, "utf8") : "";
-	const withoutFence = current.replace(/(?:^|\n)# wktree-start\n[\s\S]*?\n# wktree-end\n?/g, (match) =>
-		match.startsWith("\n") ? "\n" : "",
-	);
+	const start = `# ${name}-start`;
+	const end = `# ${name}-end`;
+	const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const fencePattern = new RegExp(`(?:^|\\n)# ${escapedName}-start\\n[\\s\\S]*?\\n# ${escapedName}-end\\n?`, "g");
+	const withoutFence = current.replace(fencePattern, (match) => (match.startsWith("\n") ? "\n" : ""));
 	const uniquePaths = [...new Set(paths)].sort();
-	const nextBlock = uniquePaths.length > 0 ? `# wktree-start\n${uniquePaths.join("\n")}\n# wktree-end\n` : "";
+	const nextBlock = uniquePaths.length > 0 ? `${start}\n${uniquePaths.join("\n")}\n${end}\n` : "";
 	const separator = withoutFence !== "" && !withoutFence.endsWith("\n") && nextBlock !== "" ? "\n" : "";
 	writeFileSync(excludePath, `${withoutFence}${separator}${nextBlock}`);
 }

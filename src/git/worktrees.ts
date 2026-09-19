@@ -31,7 +31,7 @@ function parseRecord(record: string, canonical: boolean): Worktree {
 	}
 
 	const branch = branchRef?.startsWith("refs/heads/") ? branchRef.slice("refs/heads/".length) : null;
-	const slotMatch = path.match(/__feat(\d+)$/);
+	const slotMatch = path.match(/(?:__feat|[/\\]\.wktree[/\\]feat)(\d+)$/);
 	const pool = slotMatch
 		? {
 				index: Number(slotMatch[1]),

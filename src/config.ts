@@ -13,6 +13,7 @@ import type {
 	PolicyRule,
 	ProjectConfig,
 	TreesConfig,
+	WorktreeLocation,
 } from "./types.ts";
 
 const ADD_POLICIES = ["origin_default", "fresh_canonical"] as const;
@@ -55,6 +56,8 @@ export function parseConfig(toml: string): TreesConfig {
 	if (raw.defaults !== undefined && !isRecord(raw.defaults)) {
 		throw new ConfigError("[defaults] must be a TOML table");
 	}
+	const worktreeLocation =
+		parseWorktreeLocation(raw.worktree_location, "worktree_location", "sibling") ?? "sibling";
 	const defaults = parsePolicyTables(raw.defaults ?? {}, "[defaults]");
 	const rules = rawRules.map((entry, index) => parseRuleConfig(entry, index));
 	const seenRoots = new Set<string>();
@@ -63,11 +66,24 @@ export function parseConfig(toml: string): TreesConfig {
 		const rawProject = rawProjects[index];
 		const needsCommand =
 			project.poolSize !== null || project.copy.length > 0 || (isRecord(rawProject) && rawProject.copy_mode_default !== undefined);
-		if (needsCommand && !resolveEffectiveCommand({projects, rules, defaults}, project.root).command) {
+		if (
+			needsCommand &&
+			!resolveEffectiveCommand({projects, rules, defaults, worktreeLocation}, project.root).command
+		) {
 			throw new ConfigError(`[[project]] root \`${project.root}\` requires an effective command for pooled or copy setup`);
 		}
 	}
-	return {projects, rules, defaults};
+	return {projects, rules, defaults, worktreeLocation};
+}
+
+function parseWorktreeLocation(
+	value: unknown,
+	label: string,
+	fallback?: WorktreeLocation,
+): WorktreeLocation | undefined {
+	if (value === undefined) return fallback;
+	if (value === "sibling" || value === "nested") return value;
+	throw new ConfigError(`${label} must be "sibling" or "nested"`);
 }
 
 function parseRuleConfig(entry: unknown, index: number): PolicyRule {
@@ -79,10 +95,12 @@ function parseRuleConfig(entry: unknown, index: number): PolicyRule {
 	const rootGlob = expandRootGlob(entry.root_glob, `${label}: root_glob`);
 	const command = parseOptionalCommand(entry.command, `${label}: command`);
 	const preRemoteCheck = parseOptionalCommand(entry.pre_remote_check, `${label}: pre_remote_check`);
+	const worktreeLocation = parseWorktreeLocation(entry.worktree_location, `${label}: worktree_location`);
 	return {
 		rootGlob,
 		command,
 		...(preRemoteCheck ? {preRemoteCheck} : {}),
+		...(worktreeLocation ? {worktreeLocation} : {}),
 		...parsePolicyTables(entry, label),
 	};
 }
@@ -105,6 +123,7 @@ function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string
 	const commandValue = entry.command;
 	const command = parseOptionalCommand(commandValue, `${label}: command`);
 	const preRemoteCheck = parseOptionalCommand(entry.pre_remote_check, `${label}: pre_remote_check`);
+	const worktreeLocation = parseWorktreeLocation(entry.worktree_location, `${label}: worktree_location`);
 
 	const root = expandPath(rootValue);
 	if (seenRoots.has(root)) {
@@ -126,6 +145,7 @@ function parseProjectConfig(entry: unknown, index: number, seenRoots: Set<string
 		root,
 		command,
 		...(preRemoteCheck ? {preRemoteCheck} : {}),
+		...(worktreeLocation ? {worktreeLocation} : {}),
 		poolSize,
 		copyModeDefault,
 		copy,
@@ -194,7 +214,7 @@ function isFinishStrategy(value: unknown): value is FinishStrategy {
 export function readConfig(): TreesConfig {
 	const configHome = process.env.XDG_CONFIG_HOME ?? resolve(homedir(), ".config");
 	const configPath = resolve(configHome, "wktree.toml");
-	if (!existsSync(configPath)) return {projects: [], rules: [], defaults: {}};
+	if (!existsSync(configPath)) return {projects: [], rules: [], defaults: {}, worktreeLocation: "sibling"};
 	return parseConfig(readFileSync(configPath, "utf8"));
 }
 
@@ -256,18 +276,22 @@ export function explainPolicy(config: TreesConfig, canonicalRoot: string) {
 	const project = findProjectForRoot(config, root);
 	let addPolicy = config.defaults.add?.policy ?? BUILTIN_ADD_POLICY;
 	let finishPolicy = {...BUILTIN_FINISH_POLICY, ...config.defaults.finish};
+	let worktreeLocation = config.worktreeLocation;
 	for (const rule of matchedRules) {
 		if (rule.add?.policy) addPolicy = rule.add.policy;
 		finishPolicy = {...finishPolicy, ...rule.finish};
+		if (rule.worktreeLocation) worktreeLocation = rule.worktreeLocation;
 	}
 	if (project?.add?.policy) addPolicy = project.add.policy;
 	if (project?.finish) finishPolicy = {...finishPolicy, ...project.finish};
+	if (project?.worktreeLocation) worktreeLocation = project.worktreeLocation;
 	return {
 		canonicalRoot: root,
 		matchedRules,
 		project,
 		addPolicy,
 		finishPolicy,
+		worktreeLocation,
 		command: resolveEffectiveCommand(config, root),
 		preRemoteCheck: resolvePreRemoteCheck(config, root),
 	};

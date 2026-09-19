@@ -36,7 +36,7 @@ def run-post-create [runner_path, created_path: string] {
     }
     if $result.exit_code != 0 {
         print --stderr $"wk: post-create failed; rolling back ($created_path)"
-        error make {msg: $"post-create failed with exit code ($result.exit_code)"}
+        error make --unspanned $"post-create failed with exit code ($result.exit_code)"
     }
     print --stderr "wk: post-create complete"
 }
@@ -128,14 +128,14 @@ export def --env "wk add" [
     let current_branch = if $self {
         let result = git branch --show-current | complete
         if $result.exit_code != 0 or ($result.stdout | str trim) == "" {
-            error make {msg: "--self requires the current worktree to be on a branch"}
+            error make --unspanned "--self requires the current worktree to be on a branch"
         }
         $result.stdout | str trim
     } else {
         null
     }
     if $self and $base != null {
-        error make {msg: "provide either --self or an explicit base, not both"}
+        error make --unspanned "provide either --self or an explicit base, not both"
     }
 
     let selected_base = if $self { $current_branch } else { $base }
@@ -153,7 +153,7 @@ export def --env "wk add" [
 
     if $outcome.payload == null {
         if $outcome.exit_code != 0 {
-            error make {msg: "wktree add failed"}
+            error make --unspanned "wktree add failed"
         }
         return
     }
@@ -165,7 +165,7 @@ export def --env "wk add" [
                 run-post-create $outcome.payload.post_create_script_path $outcome.payload.worktree_path
             } catch {|err|
                 rollback-add-payload $outcome.payload
-                error make $err.raw
+                error make --unspanned $err.raw.msg
             }
             print --stderr "wk: opening tmux session"
             wk-open-dir $outcome.payload.worktree_path $outcome.payload.title
@@ -184,34 +184,32 @@ export def --env "wk add" [
 			})
             if $retry.payload == null {
                 if $retry.exit_code != 0 {
-                    error make {msg: "wktree add failed"}
+                    error make --unspanned "wktree add failed"
                 }
                 return
             }
             if $retry.payload.kind != "ready" {
-                error make {
-                    msg: (
-                        wktree-message $retry.payload $"wktree add returned ($retry.payload.kind)"
-                    )
-                }
+                error make --unspanned (
+                    wktree-message $retry.payload $"wktree add returned ($retry.payload.kind)"
+                )
             }
             print --stderr $"wk: worktree ready at ($retry.payload.worktree_path)"
             try {
                 run-post-create $retry.payload.post_create_script_path $retry.payload.worktree_path
             } catch {|err|
                 rollback-add-payload $retry.payload
-                error make $err.raw
+                error make --unspanned $err.raw.msg
             }
             print --stderr "wk: opening tmux session"
             wk-open-dir $retry.payload.worktree_path $retry.payload.title
         }
         "blocked" => {
-            error make {
-                msg: (wktree-message $outcome.payload "wktree add blocked")
-            }
+            error make --unspanned (
+                wktree-message $outcome.payload "wktree add blocked"
+            )
         }
         _ => {
-            error make {msg: $"unexpected wktree add result: ($outcome.payload.kind)"}
+            error make --unspanned $"unexpected wktree add result: ($outcome.payload.kind)"
         }
     }
 }
@@ -240,7 +238,7 @@ export def --env "wk remove" [
 		} else if $branch != null {
 			$args | append [--branch $branch] | flatten
 		} else {
-			error make { msg: "provide a branch name or pass --self" }
+			error make --unspanned "provide a branch name or pass --self"
 		}
 		let args = if $force { $args | append "--force" } else { $args }
 		^wktree ...$args
@@ -251,7 +249,7 @@ export def --env "wk remove" [
             cd $cwd
         }
         if $outcome.exit_code != 0 {
-            error make {msg: "wktree remove failed"}
+            error make --unspanned "wktree remove failed"
         }
         return
     }
@@ -259,11 +257,9 @@ export def --env "wk remove" [
         if $self_path != null {
             cd $cwd
         }
-        error make {
-            msg: (
-                wktree-message $outcome.payload $"wktree remove returned ($outcome.payload.kind)"
-            )
-        }
+        error make --unspanned (
+            wktree-message $outcome.payload $"wktree remove returned ($outcome.payload.kind)"
+        )
     }
     wk-close-dir $outcome.payload.worktree_path
     if $env.PWD == $outcome.payload.worktree_path or ($env.PWD | str starts-with $"($outcome.payload.worktree_path)/") {
@@ -281,16 +277,14 @@ export def "wk finish" [
 
     if $outcome.payload == null {
         if $outcome.exit_code != 0 {
-            error make {msg: "wktree finish failed"}
+            error make --unspanned "wktree finish failed"
         }
         return
     }
     if $outcome.payload.kind != "ready" {
-        error make {
-            msg: (
-                wktree-message $outcome.payload $"wktree finish returned ($outcome.payload.kind)"
-            )
-        }
+        error make --unspanned (
+            wktree-message $outcome.payload $"wktree finish returned ($outcome.payload.kind)"
+        )
     }
 
     let cleanup = $outcome.payload.cleanup_actions | default []
@@ -316,16 +310,14 @@ export def "wk copy" [
 
     if $outcome.payload == null {
         if $outcome.exit_code != 0 {
-            error make {msg: "wktree copy failed"}
+            error make --unspanned "wktree copy failed"
         }
         return
     }
     if $outcome.payload.kind != "ready" {
-        error make {
-            msg: (
-                wktree-message $outcome.payload $"wktree copy returned ($outcome.payload.kind)"
-            )
-        }
+        error make --unspanned (
+            wktree-message $outcome.payload $"wktree copy returned ($outcome.payload.kind)"
+        )
     }
     if $json {
         $outcome.payload

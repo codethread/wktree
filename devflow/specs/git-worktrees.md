@@ -48,6 +48,12 @@ config, and optional per-repository pool slots; tmux is a consumer, not a databa
 - **Decision:** Branch/path naming is the coordination spine (see ยง3).
   - **Rationale:** Deterministic naming lets every consumer derive identity independently
     with no shared state or handshake.
+- **Decision:** Worktrees may use the default sibling layout or a configured nested layout.
+  The configured layout is a creation preference, not an invariant for registered worktrees.
+  - **Rationale:** Sibling paths remain backwards-compatible and easy to discover, while
+    `<canonicalRoot>/.wktree/` avoids clutter around repositories with many worktrees. Treating
+    Git's worktree registry as authoritative keeps legacy and manually located worktrees usable
+    when the preference changes.
 - **Decision:** New branches default to origin's default branch/trunk unless a base is
   given.
   - **Rationale:** Commands are often run from inside another worktree; defaulting to the
@@ -100,9 +106,21 @@ config, and optional per-repository pool slots; tmux is a consumer, not a databa
 Branch, path, and session identity are deterministic and reconstructable from git and
 filesystem state alone.
 
-- Non-pooled worktree path: `<canonicalRoot>__<branch with / encoded as -->`.
-- Pooled worktree path: `<canonicalRoot>__featN`.
+- With `worktree_location = "sibling"` (the default):
+  - non-pooled path: `<canonicalRoot>__<branch with / encoded as -->`;
+  - pooled path: `<canonicalRoot>__featN`.
+- With `worktree_location = "nested"`:
+  - non-pooled path: `<canonicalRoot>/.wktree/<branch with / encoded as -->`;
+  - pooled path: `<canonicalRoot>/.wktree/featN`.
 - Pooled placeholder branch: `wk-pool/featN`.
+
+The effective location controls only newly created worktrees and missing pool slots. Existing
+worktrees retain the paths reported by `git worktree list`, whether sibling, nested, or manually
+chosen. `path` returns a registered branch's actual path before deriving a new path from config.
+
+For nested layouts, `wktree` records `/.wktree/` in a dedicated fenced block in the
+repository's shared exclude file before creating a worktree. The canonical checkout therefore
+remains clean.
 
 ### Canonical root
 
@@ -115,8 +133,14 @@ checks.
 Emitted in `add`, `remove`, and `list` payloads; the wrapper/tmux layer derives the same
 identity from the worktree path:
 
-- `session.name = basename(worktree_path).replaceAll(".", "_")`
+- sibling `session.name = basename(worktree_path).replaceAll(".", "_")`
+- nested `session.name = "<canonical-root-basename>__<worktree-basename>".replaceAll(".", "_")`
 - `session.path = worktree_path`
+
+The nested form preserves the repository prefix used by sibling paths, preventing common branch
+names in different repositories from colliding in tmux. Manually located worktrees use their path
+basename.
+
 - default window/title = branch name
 
 Missing tmux sessions are normal and reconstructable, never an error.
@@ -134,8 +158,11 @@ A project with `pool_size` uses fixed reusable slots. Pooled mode changes comman
 behavior across `path`, `add`, `remove`, `list`, `ensure`, and `status`, and introduces
 the `pool_full` outcome.
 
-- Slot path `<root>__featN`; placeholder branch `wk-pool/featN`; initialized marker
-  `wk-pool-initialized` in git metadata.
+- Existing slots are discovered from registered worktrees in either sibling or nested form;
+  only missing slots use the effective location preference. Placeholder branch `wk-pool/featN`;
+  initialized marker `wk-pool-initialized` in git metadata.
+- If both sibling and nested registered worktrees claim the same `featN` slot, pool operations
+  block rather than choosing one silently.
 - `add`, `list`, and pooled `remove` initialize absent or half-initialized slots before
   allocating, listing, or recycling them. Allocation happens only after this ensure step
   succeeds; initialization failures are loud and no `pool_full` payload is returned for an
@@ -430,6 +457,7 @@ canonical root:
     "source": "rule:~/dev/projects/**",
     "value": "test -f .envrc || { echo 'missing .envrc' >&2; exit 1; }"
   },
+  "worktree_location": "sibling",
   "add": { "policy": "fresh_canonical" },
   "finish": {
     "enabled": true,
@@ -469,6 +497,12 @@ exact canonical roots for bootstrap, pools, copy setup, and exact policy overrid
 configuration also supports defaults and root-glob rules that can affect repositories without
 requiring bootstrap setup.
 
+Top-level fields:
+
+| Field               | Default     | Purpose |
+| ------------------- | ----------- | ------- |
+| `worktree_location` | `"sibling"` | Global preference for creating new sibling paths or nested paths under `<canonicalRoot>/.wktree/`. |
+
 Implemented exact project fields:
 
 | Field               | Required                                   | Purpose                                                                                                                            |
@@ -477,6 +511,7 @@ Implemented exact project fields:
 | `command`           | when no matching rule command exists and using pools, copy, or bootstrap setup | Bootstrap command run as the post-create script. Policy-only exact projects may omit it; absent effective commands emit no bootstrap script. |
 | `pre_remote_check`  | no                                         | Bash snippet run before remote-aware operations for this exact root; exact project values override matching rules.                 |
 | `name`              | no                                         | Project identifier; defaults to the basename of `root`.                                                                            |
+| `worktree_location` | no                                         | Exact-root override for where new worktrees and missing pool slots are created.                                                     |
 | `pool_size`         | no                                         | Enables pooled mode with this many fixed slots.                                                                                    |
 | `copy_mode_default` | no                                         | `copy` or `symlink`; defaults to `copy` and applies to all copy entries unless overridden.                                         |
 | `copy`              | no                                         | Files or directories to copy or symlink into created worktrees before `command` runs.                                              |
@@ -490,6 +525,7 @@ Policy fields:
 | `[[rule]].root_glob`    | rule            | Canonical root glob to match, with leading `~` expansion only.                                                                      |
 | `[[rule]].command`      | rule            | Optional inherited Bash bootstrap command for matching roots; later matching rule commands win.                                     |
 | `[[rule]].pre_remote_check` | rule        | Optional inherited Bash snippet run before remote-aware operations; later matching rule values win.                                 |
+| `[[rule]].worktree_location` | rule       | Optional location preference for matching roots; later matching rule values win.                                                    |
 | `[rule.add].policy`     | rule            | Add policy for matching roots.                                                                                                      |
 | `[rule.finish]`         | rule            | Finish policy for matching roots: `enabled`, `strategy`, `push`, `remove_worktree`, and `delete_branch`.                            |
 | `[project.add].policy`  | exact project   | Exact-root add policy override.                                                                                                     |
@@ -500,6 +536,8 @@ Bootstrap scripts run under bash with `WK_ROOT` and `WK_CREATED` exported (see ย
 Example:
 
 ```toml
+worktree_location = "nested"
+
 [defaults.add]
 policy = "origin_default"
 
@@ -512,6 +550,7 @@ delete_branch = false
 
 [[rule]]
 root_glob = "~/dev/projects/**"
+worktree_location = "sibling"
 pre_remote_check = "test -f .envrc || { echo 'missing .envrc' >&2; exit 1; }"
 command = '''
 if [[ -f bun.lock ]]; then
@@ -538,6 +577,7 @@ delete_branch = true
 name = "example"
 root = "~/dev/example"
 command = "bun install"
+worktree_location = "nested"
 copy_mode_default = "copy"
 copy = [
   ".env",

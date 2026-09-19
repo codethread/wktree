@@ -4,6 +4,7 @@ import type {Worktree} from "./git/worktrees.ts";
 export type {Worktree} from "./git/worktrees.ts";
 
 export type AddPolicy = "origin_default" | "fresh_canonical";
+export type WorktreeLocation = "sibling" | "nested";
 export type FinishStrategy = "ff_only" | "rebase_ff" | "squash" | "merge_commit";
 export interface FinishPolicy {
 	enabled: boolean;
@@ -21,6 +22,7 @@ export interface ProjectConfig extends PolicyTables {
 	name: string | null;
 	root: string;
 	command: string | null;
+	worktreeLocation?: WorktreeLocation;
 	preRemoteCheck?: string | null;
 	poolSize: number | null;
 	copyModeDefault: CopyMode;
@@ -30,6 +32,7 @@ export interface ProjectConfig extends PolicyTables {
 export interface PolicyRule extends PolicyTables {
 	rootGlob: string;
 	command: string | null;
+	worktreeLocation?: WorktreeLocation;
 	preRemoteCheck?: string | null;
 }
 
@@ -37,7 +40,12 @@ export type CopyMode = "copy" | "symlink";
 export type CopyEntry = {from: string; to: string[]; mode: CopyMode};
 export type CopiedFile = {from: string; to: string; type: "file" | "directory" | "symlink"};
 
-export type TreesConfig = {projects: ProjectConfig[]; rules: PolicyRule[]; defaults: PolicyTables};
+export type TreesConfig = {
+	projects: ProjectConfig[];
+	rules: PolicyRule[];
+	defaults: PolicyTables;
+	worktreeLocation: WorktreeLocation;
+};
 
 export interface Slot {
 	index: number;

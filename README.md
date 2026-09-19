@@ -58,19 +58,24 @@ wktree config explain --help
 
 `wktree` resolves one checkout as the **canonical root** for a repository. That root is protected and anchors config lookup, default-branch policy, generated paths, and safety checks.
 
-Normal worktrees are created beside the root:
+By default, normal worktrees are created beside the root:
 
 ```text
 <canonical-root>__<branch-name-with-/encoded-as-->
 ```
 
-Pooled repositories reuse fixed slots instead:
+Set `worktree_location = "nested"` to create new worktrees under the canonical root instead:
 
 ```text
-<canonical-root>__feat1
-<canonical-root>__feat2
-...
+<canonical-root>/.wktree/<branch-name-with-/encoded-as-->
 ```
+
+Pooled repositories reuse fixed slots. These are `<canonical-root>__featN` in sibling mode and
+`<canonical-root>/.wktree/featN` in nested mode.
+
+The setting is a preference for newly created worktrees and missing pool slots. Existing sibling,
+nested, and manually located worktrees remain discoverable through Git metadata, so changing the
+preference does not require migration.
 
 There is no app database. Current state comes from git worktree metadata, filesystem paths, and config. Tmux integration consumes emitted path/session data; it is not the source of truth.
 
@@ -118,7 +123,7 @@ ${XDG_CONFIG_HOME:-~/.config}/wktree.toml
 
 Resolution order:
 
-1. built-in defaults;
+1. built-in defaults and top-level `worktree_location`;
 2. matching `[[rule]]` entries in file order;
 3. exact `[[project]]` entry for the canonical root.
 
@@ -127,6 +132,8 @@ Later layers override earlier ones.
 ### Schema
 
 ```toml
+worktree_location = "sibling" # "sibling" | "nested"; defaults to "sibling"
+
 [defaults.add]
 policy = "origin_default" # "origin_default" | "fresh_canonical"
 
@@ -139,6 +146,7 @@ delete_branch = false
 
 [[rule]]
 root_glob = "~/dev/projects/**"   # required for rules; leading ~/ supported
+worktree_location = "nested"      # optional override for matching repositories
 command = "bun install"           # optional bash snippet
 pre_remote_check = "test -f .env" # optional bash snippet
 
@@ -157,6 +165,7 @@ root = "~/dev/projects/example"   # required for projects
 name = "example"                  # optional; defaults to basename(root)
 command = "bun install"           # required for pools/copy unless inherited from a rule
 pre_remote_check = "test -f .env" # optional
+worktree_location = "sibling"     # optional exact-root override
 pool_size = 3                      # optional; enables fixed slots
 copy_mode_default = "copy"        # optional: "copy" | "symlink"; default "copy"
 copy = [                           # optional
@@ -178,6 +187,7 @@ delete_branch = false
 
 Notes:
 
+- `worktree_location` may be set globally, on a rule, or on an exact project. It controls where new worktrees and missing pool slots are created; registered worktrees keep their actual Git-reported paths. `nested` adds `/.wktree/` to the repository's shared exclude file so the canonical checkout remains clean.
 - `command` and `pre_remote_check` run under bash.
 - `command` receives `WK_ROOT` and `WK_CREATED`.
 - `origin_default` starts default-base work from `origin/<default>` without mutating the canonical root.
