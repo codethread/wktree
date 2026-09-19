@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.0] - 2026-09-19
+
+### Added
+
+- `worktree_location` config option (`"sibling"` or `"nested"`) at the global, rule, and exact-project layers. Nested repositories create new worktrees and missing pool slots under `<canonical-root>/.wktree/`, and `wktree` records a fenced `/.wktree/` entry in the repository's shared exclude file so the canonical checkout stays clean.
+
+### Changed
+
+- `wktree path` and `wktree add` resolve an existing branch to its registered worktree path before deriving a path from config, so sibling, nested, and manually located worktrees remain discoverable after changing `worktree_location`.
+- Pool slots are discovered from Git worktree metadata in either sibling or nested form; only missing slots use the configured location. Ambiguous sibling/nested claims for the same slot block loudly instead of resolving silently.
+- Nested worktrees use `<canonical-root-basename>__<worktree-basename>` as their tmux session name, matching the sibling naming scheme and avoiding cross-repository collisions.
+- `wktree config explain` reports the effective `worktree_location` in text and JSON output.
+- Nushell wrapper errors use `error make --unspanned`, so messages no longer carry code spans.
+
+### Fixed
+
+- `wktree add` reports a clear duplicate-branch error when the branch is already checked out in another worktree.
+
 ## [0.3.0] - 2026-09-06
 
 ### Added
