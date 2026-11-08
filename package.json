@@ -27,7 +27,7 @@
 	},
 	"dependencies": {
 		"@bomb.sh/tab": "0.0.22",
-		"@codethread/cli-changelog": "github:codethread/cli-changelog#6c189bc13fece3f730dcaa5daca7cfd8449bde28",
+		"@codethread/cli-changelog": "github:codethread/cli-changelog#f2d7736ebb310780d1b8c08bb0bb3cd077c82dec",
 		"commander": "^14.0.3",
 		"gray-matter": "^4.0.3",
 		"skills-handler": "^0.1.2",

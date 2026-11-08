@@ -6,7 +6,7 @@
       "name": "wktree",
       "dependencies": {
         "@bomb.sh/tab": "0.0.22",
-        "@codethread/cli-changelog": "github:codethread/cli-changelog#6c189bc13fece3f730dcaa5daca7cfd8449bde28",
+        "@codethread/cli-changelog": "github:codethread/cli-changelog#f2d7736ebb310780d1b8c08bb0bb3cd077c82dec",
         "commander": "^14.0.3",
         "gray-matter": "^4.0.3",
         "skills-handler": "^0.1.2",
@@ -28,7 +28,7 @@
 
     "@cacheable/utils": ["@cacheable/utils@2.5.0", "", { "dependencies": { "hashery": "^1.5.1", "keyv": "^5.6.0" } }, "sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA=="],
 
-    "@codethread/cli-changelog": ["@codethread/cli-changelog@github:codethread/cli-changelog#6c189bc", { "dependencies": { "zod": "^4.6.5" } }, "codethread-cli-changelog-6c189bc", "sha512-W+vRkcR41HdoGUGjEiDuqwcwEkhkuVzINeFKcuXV4NPNOmvxM55cHU2p4k3rNkrIZs5NoAkwulABbhCoTe5Cxw=="],
+    "@codethread/cli-changelog": ["@codethread/cli-changelog@github:codethread/cli-changelog#f2d7736", { "peerDependencies": { "zod": "^4.6.5" } }, "codethread-cli-changelog-f2d7736", "sha512-Iintk9tbxAmt5ZAbQj98oRhwpSp0A6uLKZcT6v2A4s0PPTo0UaHZjsLndpfhk3b5FmKHqamTHqAP43Zo0oLh5g=="],
 
     "@eslint-community/eslint-utils": ["@eslint-community/eslint-utils@4.10.1", "", { "dependencies": { "eslint-visitor-keys": "^3.4.3" }, "peerDependencies": { "eslint": "^6.0.0 || ^7.0.0 || >=8.0.0" } }, "sha512-cuadcxVFE8sDK6iWJbs8Sn0av2Nrh2QSGQhVlBW9AaAHqHwjWsZHT8LJ4hFGPh7ASBV2deFdM7H/DPjulmh8rg=="],
 
