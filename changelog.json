@@ -1,5 +1,22 @@
 [
 	{
+		"version": "0.10.1",
+		"changes": [
+			{
+				"commit": "3020b83ea24f423c24900b90d9db51c43bd4e79c",
+				"summary": "Use the shared CLI changelog library",
+				"body": "Load changelog schemas, version queries, pagination and rendering from the local @codethread/cli-changelog package. The compiled executable bundles the library.",
+				"breaking": [],
+				"adoption": [
+					{
+						"requirement": "required",
+						"text": "For source builds, install dependencies in the cli-changelog checkout and run bun link there before installing this repository with bun install --frozen-lockfile. Compiled executables need no additional files."
+					}
+				]
+			}
+		]
+	},
+	{
 		"version": "0.10.0",
 		"changes": [
 			{
