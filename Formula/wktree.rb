@@ -2,8 +2,8 @@ class Wktree < Formula
   desc "Deterministic git worktree manager"
   homepage "https://github.com/codethread/wktree"
   url "https://github.com/codethread/wktree.git",
-      tag:      "v0.4.0",
-      revision: "2b94a629e8c2d68ef74eceae27736d9a2b9d3629"
+      tag:      "v0.5.0",
+      revision: "1fac4e0993e1d191b8faad49d37bf6b018282ff9"
 
   depends_on "bun" => :build
   depends_on "git"
@@ -15,6 +15,7 @@ class Wktree < Formula
   end
 
   test do
+    assert_equal "#{version}\n", shell_output("#{bin}/wktree --version")
     assert_match "Usage: wktree", shell_output("#{bin}/wktree --help 2>&1")
   end
 end
