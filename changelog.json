@@ -1,5 +1,22 @@
 [
 	{
+		"version": "0.10.2",
+		"changes": [
+			{
+				"commit": "30cf9064110b07e33d9863480b1bb0d9ace58ce5",
+				"summary": "Install the shared changelog library from GitHub",
+				"body": "Pin @codethread/cli-changelog to a full GitHub commit and record its integrity in bun.lock. Standard frozen-lockfile installs fetch the shared package for source, CI and Homebrew builds. Compiled executables bundle the dependency.",
+				"breaking": [],
+				"adoption": [
+					{
+						"requirement": "optional",
+						"text": "Run bun install --frozen-lockfile and rebuild the executable to use the GitHub-pinned dependency."
+					}
+				]
+			}
+		]
+	},
+	{
 		"version": "0.10.1",
 		"changes": [
 			{
