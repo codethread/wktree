@@ -53,7 +53,7 @@ Update every version source to the same new version:
 - `package.json` `version`
 - The CLI imports its version from `package.json`; no separate CLI version edit is needed.
 
-Do not update `Formula/wktree.rb` yet. The formula should point at the final release tag and peeled commit revision, which only exist after the release commit is tagged.
+Update `Formula/wktree.rb` after publishing the release tag, when its source archive is available for download and checksumming.
 
 ## 5. Update `changelog.json`
 
@@ -105,7 +105,7 @@ git push origin "vx.y.z"
 Verify the pushed tag exists remotely and capture the peeled commit SHA:
 
 ```bash
-git ls-remote --tags origin "vx.y.z"
+git ls-remote --tags origin "vx.y.z" "vx.y.z^{}"
 git rev-list -n 1 "vx.y.z"
 ```
 
@@ -113,20 +113,42 @@ For annotated tags, use the peeled commit SHA from `git rev-list -n 1`, not the 
 
 ## 9. Update Homebrew formula
 
-Update `Formula/wktree.rb` so the stable formula uses the new tag rather than `head`/`--HEAD`:
+Download the published tag archive and calculate its SHA-256:
 
-```ruby
-url "https://github.com/codethread/wktree.git",
-    tag:      "vx.y.z",
-    revision: "<peeled-commit-sha>"
+```bash
+version=x.y.z
+state=$(mktemp -d)
+curl -fL "https://github.com/codethread/wktree/archive/refs/tags/v${version}.tar.gz" \
+  -o "$state/wktree.tar.gz"
+shasum -a 256 "$state/wktree.tar.gz"
 ```
 
-Validate the formula locally:
+Set `Formula/wktree.rb` to that exact archive URL and checksum:
+
+```ruby
+url "https://github.com/codethread/wktree/archive/refs/tags/vx.y.z.tar.gz"
+sha256 "<archive-sha256>"
+```
+
+Mise's Homebrew metadata evaluator requires a checksummed source archive; a Git URL with `tag` and `revision` does not satisfy it.
+
+Validate the formula and build the downloaded release in disposable state:
 
 ```bash
 ruby -c Formula/wktree.rb
 brew style Formula/wktree.rb
+tar -xzf "$state/wktree.tar.gz" -C "$state"
+(
+  cd "$state/wktree-$version"
+  bun install --frozen-lockfile --ignore-scripts
+  bun build bin/wktree.ts --compile --outfile dist/wktree
+  test "$(dist/wktree --version)" = "$version"
+  dist/wktree --help
+)
+rm -rf "$state"
 ```
+
+Every command must pass before publication. The archive build verifies that the release works without a Git checkout or dependencies from the working tree.
 
 Commit and push the formula update:
 
