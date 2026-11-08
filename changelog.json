@@ -1,5 +1,29 @@
 [
 	{
+		"version": "0.5.0",
+		"changes": [
+			{
+				"commit": "66507f70c3117cb50f1704ba6689d4341023206e",
+				"summary": "Restore the evolved worktree engine as standalone Wktree",
+				"body": "Ship a compiled standalone CLI with safe worktree lifecycle operations, fixed pools, offline add, pinned local integration, structured JSON, bundled skills, and generated zsh and Nushell picker functions. Global configuration is read from ~/.config/wktree.toml (or XDG_CONFIG_HOME/wktree.toml); repository-local overrides come from .wktree.toml at the canonical root. Homebrew builds and installs the standalone executable.",
+				"breaking": [
+					"The old nu/wktree modules are replaced by wktree shell-init zsh and wktree shell-init nu.",
+					"The old --skip-pre-remote-check flag is replaced by --no-network for offline add."
+				],
+				"adoption": [
+					{
+						"requirement": "required",
+						"text": "Replace old shell module imports with the output of wktree shell-init for your shell. Regenerate the Nushell module after upgrading."
+					},
+					{
+						"requirement": "optional",
+						"text": "Use a canonical-root .wktree.toml to share repository setup and policy across worktrees."
+					}
+				]
+			}
+		]
+	},
+	{
 		"version": "0.9.1",
 		"changes": []
 	},

@@ -4,6 +4,15 @@
 
 It is useful when you want predictable worktree paths, safe cleanup, JSON output, optional fixed worktree pools, and repeatable setup for local files such as `.env`.
 
+## Install with Homebrew
+
+```sh
+brew tap codethread/wktree https://github.com/codethread/wktree
+brew install codethread/wktree/wktree
+```
+
+For an existing installation, use `brew upgrade codethread/wktree/wktree`. Homebrew installs the compiled executable; Bun is required only while building it.
+
 ## Build and install
 
 Requirements: Git; Bun for building. The optional `wk` picker requires fzf and zsh or Nushell.
