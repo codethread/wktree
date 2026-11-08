@@ -20,12 +20,16 @@ Requirements: Git; Bun for building. The optional `wk` picker requires fzf and z
 From the repository root, install dependencies, compile locally, then install the executable:
 
 ```nu
-bun install
+bun --cwd ../cli-changelog install --frozen-lockfile
+bun --cwd ../cli-changelog link
+bun install --frozen-lockfile
 bun run build
 bun run install:bin
 ```
 
-The build writes `dist/wktree`. Installation copies that standalone executable to `~/.local/bin`; put that directory on `PATH`. Building alone does not change installed commands.
+Source builds require the local `cli-changelog` checkout, installed and registered as `@codethread/cli-changelog` before installing Wktree's dependencies. The Bun link also works from Wktree worktrees. CI and Homebrew builds of these commits need the shared package registered in their build environment too.
+
+The build writes `dist/wktree` and bundles the shared changelog library. Installation copies that standalone executable to `~/.local/bin`; put that directory on `PATH`. Building alone does not change installed commands.
 
 After installing, use the built-in help for the full command reference:
 

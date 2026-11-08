@@ -2,7 +2,7 @@
 
 Git worktree lifecycle engine, CLI, and shell picker integrations.
 
-- Keep Wktree self-contained; runtime code and bundled assets live in this repository.
+- Keep Wktree-specific runtime code and bundled assets in this repository. Shared changelog behavior belongs in the declared `@codethread/cli-changelog` dependency; see README for local link setup.
 - Keep structured JSON output stable; clients branch on `kind` values. Make payload changes additive.
 - Keep the TypeScript engine authoritative. Generated shell integrations only invoke `wktree --interactive pick` and apply the `WKTREE_CD_FILE` handoff; put worktree and multiplexer behaviour in the engine.
 - Only touch the user's multiplexer or shell directory when `--interactive` is set, so agents never move the user's focus.

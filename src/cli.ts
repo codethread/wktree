@@ -7,7 +7,7 @@ import {
 	changelogSchema,
 	queryChangelog,
 	renderChangelog,
-} from "./changelog.ts";
+} from "@codethread/cli-changelog";
 import { formatFailure, renderJsonResult } from "./protocol.ts";
 import type { CommandResult } from "./protocol.ts";
 import type { Deps } from "./services.ts";
