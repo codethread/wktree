@@ -5,18 +5,13 @@ class Wktree < Formula
       tag:      "v0.4.0",
       revision: "2b94a629e8c2d68ef74eceae27736d9a2b9d3629"
 
-  depends_on "bun"
+  depends_on "bun" => :build
   depends_on "git"
 
   def install
-    system "bun", "install", "--production", "--frozen-lockfile", "--ignore-scripts"
-
-    libexec.install Dir["*"]
-
-    (bin/"wktree").write <<~EOS
-      #!/usr/bin/env bash
-      exec "#{formula_opt_bin("bun")}/bun" run "#{libexec}/bin/wktree.ts" "$@"
-    EOS
+    system "bun", "install", "--frozen-lockfile", "--ignore-scripts"
+    system "bun", "build", "bin/wktree.ts", "--compile", "--outfile", "dist/wktree"
+    bin.install "dist/wktree"
   end
 
   test do

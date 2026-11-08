@@ -1,0 +1,139 @@
+{
+	"$schema": "http://json-schema.org/draft-04/schema#",
+	"type": "object",
+	"properties": {
+		"copy": {
+			"description": "Files to materialize before bootstrap; non-empty lists require an effective command.",
+			"type": "array",
+			"items": {
+				"anyOf": [
+					{
+						"type": "string",
+						"allOf": [
+							{ "type": "string", "pattern": "\\S" },
+							{ "type": "string", "pattern": "^[^\\u0000]*$" },
+							{ "type": "string", "pattern": "^[^/~]" }
+						],
+						"description": "Copy this relative path to the same destination."
+					},
+					{
+						"type": "object",
+						"properties": {
+							"from": {
+								"type": "string",
+								"allOf": [
+									{ "type": "string", "pattern": "\\S" },
+									{ "type": "string", "pattern": "^[^\\u0000]*$" }
+								],
+								"description": "Source relative to the canonical root, absolute, or beginning with ~/."
+							},
+							"mode": {
+								"description": "Override the effective copy_mode_default.",
+								"type": "string",
+								"enum": ["copy", "symlink"]
+							},
+							"to": {
+								"anyOf": [
+									{
+										"type": "string",
+										"allOf": [
+											{ "type": "string", "pattern": "\\S" },
+											{ "type": "string", "pattern": "^[^\\u0000]*$" },
+											{ "type": "string", "pattern": "^[^/~]" }
+										],
+										"description": "A worktree-relative destination that stays inside the worktree after normalization."
+									},
+									{
+										"minItems": 1,
+										"type": "array",
+										"items": {
+											"type": "string",
+											"allOf": [
+												{ "type": "string", "pattern": "\\S" },
+												{ "type": "string", "pattern": "^[^\\u0000]*$" },
+												{ "type": "string", "pattern": "^[^/~]" }
+											],
+											"description": "A worktree-relative destination that stays inside the worktree after normalization."
+										}
+									}
+								]
+							}
+						},
+						"required": ["from", "to"],
+						"additionalProperties": false
+					}
+				]
+			}
+		},
+		"copy_mode_default": {
+			"description": "Default copy mode; falls back to copy. Explicitly setting it requires an effective command.",
+			"type": "string",
+			"enum": ["copy", "symlink"]
+		},
+		"name": {
+			"description": "Display name; defaults to the expanded root's basename.",
+			"type": "string"
+		},
+		"pool_size": {
+			"description": "Fixed pool size; requires an effective bootstrap command.",
+			"type": "integer",
+			"minimum": 1,
+			"maximum": 9007199254740991
+		},
+		"command": {
+			"description": "Bootstrap command run under bash; omitted values inherit from earlier layers.",
+			"type": "string",
+			"pattern": "\\S"
+		},
+		"pre_remote_check": {
+			"description": "Bash command run before remote operations.",
+			"type": "string",
+			"pattern": "\\S"
+		},
+		"worktree_location": {
+			"description": "Override the inherited placement for new worktrees.",
+			"type": "string",
+			"enum": ["sibling", "nested"]
+		},
+		"add": {
+			"description": "Override the inherited add policy.",
+			"type": "object",
+			"properties": {
+				"policy": {
+					"type": "string",
+					"enum": ["origin_default", "fresh_canonical"],
+					"description": "Start from origin's default branch or first fast-forward the canonical checkout."
+				}
+			},
+			"required": ["policy"],
+			"additionalProperties": false
+		},
+		"finish": {
+			"description": "Override individual inherited finish fields.",
+			"type": "object",
+			"properties": {
+				"delete_branch": {
+					"description": "Delete its branch; requires remove_worktree in the effective policy. Default: false.",
+					"type": "boolean"
+				},
+				"enabled": { "description": "Allow finishing; built-in default: true.", "type": "boolean" },
+				"push": {
+					"description": "Push before cleanup; built-in default: false.",
+					"type": "boolean"
+				},
+				"remove_worktree": {
+					"description": "Remove the checkout after integration; built-in default: false.",
+					"type": "boolean"
+				},
+				"strategy": {
+					"description": "Integration strategy; built-in default: ff_only.",
+					"type": "string",
+					"enum": ["ff_only", "rebase_ff", "squash", "merge_commit"]
+				}
+			},
+			"additionalProperties": false
+		}
+	},
+	"additionalProperties": false,
+	"description": "Repository-local .wktree.toml at the canonical root. Explicit fields override global settings; omitted fields inherit them."
+}

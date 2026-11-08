@@ -1,0 +1,42 @@
+{
+	"name": "wktree",
+	"version": "0.9.1",
+	"private": true,
+	"bin": {
+		"wktree": "./bin/wktree.ts"
+	},
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"test": "bun test --parallel --parallel-delay=0 --timeout=5000 --only-failures ./tests",
+		"typecheck": "tsc --noEmit && bun run schema:check",
+		"schema:generate": "bun run ./scripts/config-schema.ts",
+		"schema:stage": "bun run schema:generate && git add -- wktree.schema.json wktree.local.schema.json",
+		"schema:check": "bun run ./scripts/config-schema.ts --check",
+		"build": "bun build ./bin/wktree.ts --compile --target=${WKTREE_BUILD_TARGET:-bun} --outfile ./dist/wktree",
+		"test:unit": "bun test --parallel --parallel-delay=0 --timeout=5000 --only-failures ./tests/unit",
+		"test:integration": "bun test --parallel --parallel-delay=0 --timeout=5000 --only-failures ./tests/integration",
+		"install:bin": "mkdir -p ~/.local/bin && cp ./dist/wktree ~/.local/bin/wktree && chmod +x ~/.local/bin/wktree",
+		"fmt": "oxfmt",
+		"fmt:check": "oxfmt --check",
+		"lint": "oxlint --deny-warnings",
+		"lint:fix": "oxlint --fix",
+		"check": "bun run fmt:check && bun run lint && bun run typecheck && bun run test"
+	},
+	"dependencies": {
+		"@bomb.sh/tab": "0.0.22",
+		"commander": "^14.0.3",
+		"gray-matter": "^4.0.3",
+		"skills-handler": "^0.1.2",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@stylistic/eslint-plugin": "^5.10.0",
+		"@types/bun": "^1.4.2",
+		"oxfmt": "^0.71.0",
+		"oxlint": "1.86.0",
+		"typescript": "^7.0.2"
+	}
+}

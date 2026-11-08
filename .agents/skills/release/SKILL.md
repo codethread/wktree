@@ -1,10 +1,11 @@
 ---
-description: run the release process
+name: release
+description: Publish a Wktree release, update its changelog, and advance the Homebrew formula.
 ---
 
 # Release process
 
-Use this checklist to publish a new `wktree` release.
+Use this checklist only when release publication is authorized. Ordinary implementation work does not authorize tags or pushes.
 
 ## 1. Start clean on `main`
 
@@ -30,8 +31,7 @@ git tag --sort=-v:refname | head -20
 git log --oneline $(git describe --tags --abbrev=0)..HEAD
 ```
 
-Use the commit messages since the last tag to determine whether the release is patch, minor, or major.
-If there are no previous tags, review the full history and create the first version intentionally.
+Use the commit messages since the last tag to determine whether the release is patch, minor, or major. If there are no previous tags, review the full history and create the first version intentionally.
 
 ## 3. Run the full checks
 
@@ -40,7 +40,7 @@ Run all project checks before changing release metadata:
 ```bash
 bun run typecheck
 bun run check
-bun test tests
+bun run test
 bun run build
 ```
 
@@ -51,42 +51,19 @@ If any command fails, fix that before continuing.
 Update every version source to the same new version:
 
 - `package.json` `version`
-- `src/cli.ts` CLI version exposed by Commander, for example `.version("x.y.z")`
-
-If `package.json` does not yet have a `version` field, add one near the package name.
-If `src/cli.ts` does not yet expose a version, add it to the root `Command` setup so `wktree --version` reports the release version.
+- The CLI imports its version from `package.json`; no separate CLI version edit is needed.
 
 Do not update `Formula/wktree.rb` yet. The formula should point at the final release tag and peeled commit revision, which only exist after the release commit is tagged.
 
-## 5. Update `CHANGELOG.md`
+## 5. Update `changelog.json`
 
-Add a new entry using the [Keep a Changelog](https://keepachangelog.com/) style:
+Add a release object to `changelog.json`, using the existing JSON structure:
 
-```markdown
-# Changelog
+- `version`: the new package version.
+- `changes`: user-facing changes since the last tag, each with `commit`, `summary`, `body`, `breaking`, and `adoption` fields.
+- An adoption note has `requirement` (`optional` or `required`) and `text` fields.
 
-## [x.y.z] - YYYY-MM-DD
-
-### Added
-
-- ...
-
-### Changed
-
-- ...
-
-### Fixed
-
-- ...
-```
-
-Guidance:
-
-- Build the entry from commit messages since the last tag: `git log --oneline <last-tag>..HEAD`.
-- Group bullets under standard headings: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
-- Omit empty headings.
-- Keep bullets user-facing; do not include internal noise unless it affects users or maintainers.
-- Include compare links at the bottom when helpful, especially once releases are public.
+Use `git log --oneline <last-tag>..HEAD` as evidence. Preserve existing history and verify the rendered result with `bun run bin/wktree.ts changelog --release x.y.z --json`.
 
 ## 6. Re-run checks
 
@@ -95,7 +72,7 @@ After metadata and changelog edits, run the full verification again:
 ```bash
 bun run typecheck
 bun run check
-bun test tests
+bun run test
 bun run build
 ```
 
@@ -111,7 +88,7 @@ git status --short
 Commit the release changes and create an annotated tag:
 
 ```bash
-git add package.json src/cli.ts CHANGELOG.md
+git add package.json changelog.json
 git commit -m "chore(release): x.y.z"
 git tag -a "vx.y.z" -m "wktree x.y.z"
 ```
@@ -170,4 +147,4 @@ wktree --version
 wktree --help
 ```
 
-The reported version should match `package.json`, `src/cli.ts`, `CHANGELOG.md`, the git tag, and `Formula/wktree.rb`.
+The reported version should match `package.json`, `changelog.json`, the git tag, and `Formula/wktree.rb`.

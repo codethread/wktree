@@ -1,0 +1,80 @@
+[
+	{
+		"version": "0.9.1",
+		"changes": []
+	},
+	{
+		"version": "0.9.0",
+		"changes": []
+	},
+	{
+		"version": "0.8.1",
+		"changes": []
+	},
+	{
+		"version": "0.8.0",
+		"changes": []
+	},
+	{
+		"version": "0.7.1",
+		"changes": [
+			{
+				"commit": "66cc8d97df8147d1fbf7ba41084fe3a2951c2e53",
+				"summary": "integrate reviewed tasks into a pinned local feature base",
+				"body": "Use `integrate --into` with full source/target commit pins for local-only\nfast-forward delivery into an explicit registered feature worktree. Local\ncleanup uses `remove --self --integrated-into-local` with containment and\nexpected-old-ref proof. Existing default-branch finish policy is unchanged.\n\nOptional: use the new commands for independently delivered feature tasks.\nWhen adopting them, hold the matching target queue with exclusive checkout\nuse and inspect partial-effect receipts. Run cleanup from a surviving\ncheckout, selecting the source with `--cwd`. Local default-name identification\nrequires an `origin/HEAD` symbolic NAME designation, which may be dangling;\nintegration and containment need no remote history.",
+				"breaking": [],
+				"adoption": []
+			}
+		]
+	},
+	{
+		"version": "0.7.0",
+		"changes": []
+	},
+	{
+		"version": "0.6.3",
+		"changes": []
+	},
+	{
+		"version": "0.6.2",
+		"changes": []
+	},
+	{
+		"version": "0.6.1",
+		"changes": [
+			{
+				"commit": "e35554e9c4c9acff6019c6d2f84b9696e06ae5de",
+				"summary": "expose worktree tool release history offline",
+				"body": "Run `wktree changelog` to inspect recorded changes without a repository.\nUse its help for version selection, pagination and JSON output.",
+				"breaking": [],
+				"adoption": []
+			},
+			{
+				"commit": "e35554e9c4c9acff6019c6d2f84b9696e06ae5de",
+				"summary": "quote preserved source messages in squash commits",
+				"body": "Wktree appends the source branch and archived commit messages after\nthe caller's reviewed squash body. For Hive release generation, archived\nchangelog blocks are provenance: only top-level `changelog v1` blocks\ndeclare the integrated commit's tool changes.\n\nFor example, a block in the reviewed squash body can contain a shell example:\n\n~~~~text\n~~~changelog v1\nfeat(wktree): describe the consumer-visible change\n\nExplain the change and any required or optional adoption actions.\n\n```sh\nwktree changelog\n```\n~~~\n~~~~\n\nThe record format version `v1` is independent of the Hive suite version.",
+				"breaking": [
+					"Every preserved source-message line now has a Markdown blockquote prefix (`> `). Consumers that parse Wktree squash-message archives must account for this format change."
+				],
+				"adoption": [
+					{
+						"requirement": "required",
+						"text": "For Hive changelog authors: put the authoritative top-level changelog v1 blocks in the final reviewed squash body passed to wktree finish --body, with a separate single-tool Conventional Commit header for each affected tool. This is a Hive release-authoring requirement, not a requirement for other repositories using Wktree."
+					}
+				]
+			}
+		]
+	},
+	{
+		"version": "0.6.0",
+		"changes": [
+			{
+				"commit": "83a02d89b9e4c8ce233d34c475fb4e1903658d15",
+				"summary": "Finish checks integration conflicts before changing the canonical worktree.",
+				"body": "",
+				"breaking": [],
+				"adoption": []
+			}
+		]
+	}
+]

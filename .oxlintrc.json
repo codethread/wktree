@@ -1,0 +1,53 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"categories": {
+		"correctness": "error",
+		"suspicious": "error",
+		"pedantic": "error",
+		"perf": "error",
+		"style": "error",
+		"restriction": "off",
+		"nursery": "off"
+	},
+	"plugins": ["eslint", "typescript", "oxc", "unicorn", "import", "promise", "node"],
+	"jsPlugins": ["@stylistic/eslint-plugin"],
+	"env": {
+		"es2026": true,
+		"node": true
+	},
+	"globals": {
+		"Bun": "readonly"
+	},
+	"rules": {
+		"@stylistic/max-len": [
+			"error",
+			{
+				"code": 120,
+				"tabWidth": 2,
+				"ignoreTemplateLiterals": false
+			}
+		],
+		"func-style": [
+			"error",
+			"declaration",
+			{
+				"allowArrowFunctions": true
+			}
+		],
+		"import/exports-last": "off",
+		"import/group-exports": "off",
+		"import/no-named-export": "off",
+		"import/prefer-default-export": "off",
+		"max-lines": "off",
+		"max-lines-per-function": "off",
+		"one-var": "off",
+		"sort-keys": "off",
+		"unicorn/consistent-function-scoping": "off",
+		"no-duplicate-imports": [
+			"error",
+			{
+				"allowSeparateTypeImports": true
+			}
+		]
+	}
+}
