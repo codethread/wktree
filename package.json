@@ -1,6 +1,6 @@
 {
 	"name": "wktree",
-	"version": "0.5.0",
+	"version": "0.10.0",
 	"private": true,
 	"bin": {
 		"wktree": "./bin/wktree.ts"

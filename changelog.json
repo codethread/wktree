@@ -1,5 +1,22 @@
 [
 	{
+		"version": "0.10.0",
+		"changes": [
+			{
+				"commit": "66507f70c3117cb50f1704ba6689d4341023206e",
+				"summary": "Identify the standalone Bun engine with a distinct version",
+				"body": "Advance the standalone Bun-based Wktree release to 0.10.0, above the inherited 0.9.1 version. The engine is unchanged from standalone 0.5.0; wktree --version now clearly distinguishes this build from older installed binaries.",
+				"breaking": [],
+				"adoption": [
+					{
+						"requirement": "optional",
+						"text": "Upgrade or rebuild Wktree, then run wktree --version and confirm it reports 0.10.0."
+					}
+				]
+			}
+		]
+	},
+	{
 		"version": "0.5.0",
 		"changes": [
 			{
