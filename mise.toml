@@ -1,0 +1,20 @@
+min_version = "2026.10.4"
+
+[tools]
+bun = "1.4.2"
+
+# Repository bootstrap must not install unrelated global tools.
+[settings]
+enable_tools = ["bun"]
+
+[tasks.default]
+description = "Prepare the wktree checkout"
+depends = ["bootstrap"]
+
+[tasks.bootstrap]
+description = "Install locked dependencies, generate the changelog, and build wktree"
+run = [
+  "bun install --frozen-lockfile",
+  "bun run changelog:generate",
+  "bun run build",
+]

@@ -8,3 +8,4 @@ Git worktree lifecycle engine, CLI, and shell picker integrations.
 - Only touch the user's multiplexer or shell directory when `--interactive` is set, so agents never move the user's focus.
 - Preserve the canonical worktree safety rules in [`devflow/specs/git-worktrees.md`](./devflow/specs/git-worktrees.md).
 - Keep orchestration in `src/commands/` and `src/application/`, pure models in `src/domain/`, and Git/filesystem/process/multiplexer IO behind injected services.
+- For repository setup, review and trust the root `mise.toml`, then run `mise run` (or `mise run bootstrap`) to install the pinned Bun workspace, regenerate the changelog, and build. Lake checks are included in the root lint, format, and typecheck scripts.

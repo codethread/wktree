@@ -15,17 +15,19 @@ For an existing installation, use `brew upgrade codethread/wktree/wktree`. Homeb
 
 ## Build and install
 
-Requirements: Git; Bun for building. The optional `wk` picker requires fzf and zsh or Nushell.
+Requirements: Git; [mise](https://mise.jdx.dev) and its pinned Bun runtime for building. The optional `wk` picker requires fzf and zsh or Nushell.
 
-From the repository root, install dependencies, compile locally, then install the executable:
+After cloning, review `mise.toml`, trust it once, and run the default repository bootstrap. Then install the executable:
 
 ```nu
-bun install --frozen-lockfile
-bun run build
+mise trust
+mise run
 bun run install:bin
 ```
 
-The shared `@codethread/cli-changelog` dependency is pinned to a GitHub commit and installed by Bun. Source, CI and Homebrew builds use the same committed lockfile.
+`mise run` (also available as `mise run bootstrap`) installs the root workspace from its frozen lockfile, generates `CHANGELOG.md` from `changelog.json`, and compiles Wktree. Re-running it is safe. The equivalent direct commands are `bun install --frozen-lockfile`, `bun run changelog:generate`, and `bun run build`.
+
+The shared `@codethread/cli-changelog` dependency is pinned to upstream commit `c457e0a28686ce6349ce0956b1375635d53148d8`, which provides the Markdown renderer. Source, CI and Homebrew builds use the same committed root lockfile.
 
 The build writes `dist/wktree` and bundles the shared changelog library. Installation copies that standalone executable to `~/.local/bin`; put that directory on `PATH`. Building alone does not change installed commands.
 

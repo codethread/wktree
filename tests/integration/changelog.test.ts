@@ -1,10 +1,23 @@
+import { changelogHistorySchema, renderChangelogMarkdown } from "@codethread/cli-changelog";
 import { expect, test } from "bun:test";
 import history from "../../changelog.json";
+import manifest from "../../package.json";
 // eslint-disable-next-line import/no-nodejs-modules -- Run the CLI outside its repository.
 import { tmpdir } from "node:os";
-import { version } from "../../package.json";
+
+const { name, version } = manifest;
 
 const SUCCESS = 0;
+
+test("the generated Markdown changelog matches its complete recorded history", async () => {
+	const markdown = await Bun.file(new URL("../../CHANGELOG.md", import.meta.url)).text();
+	expect(markdown).toBe(
+		renderChangelogMarkdown({
+			title: name,
+			history: changelogHistorySchema.parse(history),
+		}),
+	);
+});
 
 test("the CLI reads its current recorded release through the shared changelog library", async () => {
 	const child = Bun.spawn(
