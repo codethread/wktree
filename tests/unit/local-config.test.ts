@@ -31,7 +31,6 @@ const globalConfig: TreesConfig = {
 			root,
 			name: "global-name",
 			command: "echo project",
-			poolSize: 2,
 			copyModeDefault: "symlink",
 			copy: [{ from: ".env", to: [".env"], mode: "symlink" }],
 			finish: { deleteBranch: true },
@@ -63,16 +62,15 @@ test.each([
 	},
 );
 
-test("local pool and copy setup can inherit a global rule command without an exact project", () => {
+test("local copy setup can inherit a global rule command without an exact project", () => {
 	const global: TreesConfig = {
 		...emptyConfig,
 		rules: [{ rootGlob: "/repo", command: "echo rule" }],
 	};
-	const policy = explainPolicy(localConfig({ pool_size: 1, copy: [".env"] }, global), root);
+	const policy = explainPolicy(localConfig({ copy: [".env"] }, global), root);
 	expect(policy.globalProject).toBeUndefined();
 	expect(policy.project).toMatchObject({
 		name: "repo",
-		poolSize: 1,
 		root,
 		copy: [{ from: ".env", to: [".env"], mode: "copy" }],
 	});
@@ -146,14 +144,13 @@ test("local setup inherits command and copy defaults through canonical aliases",
 		}
 		return path;
 	};
-	const config = applyRepositoryConfig({ pool_size: 1, copy: [".env"] }, globalConfig, {
+	const config = applyRepositoryConfig({ copy: [".env"] }, globalConfig, {
 		canonicalRoot: "/alias",
 		normalizePath,
 	});
 	const policy = explainPolicy(config, root, normalizePath);
 	expect(policy.command).toEqual({ command: "echo project", source: "project:/repo" });
 	expect(policy.project).toMatchObject({
-		poolSize: 1,
 		copy: [{ from: ".env", to: [".env"], mode: "symlink" }],
 	});
 	expect(policy.local).toMatchObject({ root: "/alias", path: "/alias/.wktree.toml" });
@@ -173,7 +170,6 @@ test("local copy conversion preserves object sources and normalizes scalar and l
 });
 
 test.each([
-	{ name: "pool", raw: { pool_size: 1 } },
 	{ name: "copy default", raw: { copy_mode_default: "symlink" } },
 	{ name: "nonempty copy", raw: { copy: [".env"] } },
 ] satisfies { name: string; raw: RawRepositoryConfig }[])(
@@ -191,7 +187,6 @@ test.each([
 	{ name: "project", raw: { project: [{ root }] } },
 	{ name: "blank command", raw: { command: " " } },
 	{ name: "invalid location", raw: { worktree_location: "invalid" } },
-	{ name: "zero pool", raw: { pool_size: 0 } },
 	{ name: "escaping copy", raw: { copy: ["../outside"] } },
 	{ name: "empty destinations", raw: { copy: [{ from: ".env", to: [] }] } },
 	{ name: "unknown finish key", raw: { finish: { removeWorktree: true } } },
@@ -202,14 +197,14 @@ test.each([
 
 test("local TOML parser attaches converted settings to the supplied global configuration", () => {
 	const config = parseRepositoryConfig(
-		'command = "echo parsed"\npool_size = 1\n[finish]\npush = false',
+		'command = "echo parsed"\n[finish]\npush = false',
 		globalConfig,
 		context,
 	);
 	expect(config.local).toEqual({
 		root,
 		path: "/repo/.wktree.toml",
-		options: { command: "echo parsed", poolSize: 1, finish: { push: false } },
+		options: { command: "echo parsed", finish: { push: false } },
 	});
 	expect(config.projects).toBe(globalConfig.projects);
 });
@@ -225,8 +220,8 @@ test("local parser wraps schema rejection with its configuration path", () => {
 });
 
 test("local parser propagates the effective-command requirement", () => {
-	expect(parseFailure("pool_size = 1", emptyConfig).message).toMatchInlineSnapshot(
-		'"/repo/.wktree.toml requires an effective command for pooled or copy setup"',
+	expect(parseFailure('copy = [".env"]', emptyConfig).message).toMatchInlineSnapshot(
+		'"/repo/.wktree.toml requires an effective command for copy setup"',
 	);
 });
 

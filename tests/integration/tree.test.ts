@@ -60,6 +60,10 @@ async function initOlderAndUnrelatedTree() {
 test("contained worktrees stay beneath the local default; unrelated history stays separate #test-142", async () => {
 	const { mainHead, oldHead, root } = await initOlderAndUnrelatedTree();
 	const payload = await treeJson(root);
+	const worktrees: { pool: unknown }[] = payload.nodes.flatMap(
+		(node: { worktrees: { pool: unknown }[] }) => node.worktrees,
+	);
+	expect(worktrees.every((worktree) => worktree.pool === null)).toBe(true);
 	expect(payload.nodes).toContainEqual(
 		expect.objectContaining({
 			id: mainHead,

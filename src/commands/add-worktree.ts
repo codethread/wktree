@@ -1,14 +1,12 @@
-import type { BranchState, Slot } from "../domain/worktree.ts";
 import type { Deps, GitRunner, ProgressReporter } from "../services.ts";
 import {
 	createCanonicalGitObservations,
 	createLocalGitRefs,
 	detectBranchState,
-	detectOriginDefaultBranch,
 	resolveDefaultBaseForNewBranch,
 	resolveLocalBaseCommit,
-	resolveOfflinePoolResetCommit,
 } from "../application/branches.ts";
+import type { BranchState } from "../domain/worktree.ts";
 import { EXIT_CODES } from "../errors.ts";
 import type { TreesConfig } from "../domain/config.ts";
 
@@ -26,20 +24,6 @@ export async function prepareAddBranch(options: {
 	}
 	const branchState = await detectBranchState(deps.git, root, branch);
 	return { base: await resolveBranchBase(options, branchState), branchState };
-}
-
-export async function resolvePoolResetCommit(options: {
-	base: string | null;
-	deps: Deps;
-	noNetwork: boolean;
-	root: string;
-}): Promise<string> {
-	const { base, deps, noNetwork, root } = options;
-	if (!noNetwork) {
-		const trunk = await detectOriginDefaultBranch(deps.git, root);
-		return resolveLocalBaseCommit(createLocalGitRefs(deps.git, root), `origin/${trunk}`);
-	}
-	return resolveOfflinePoolResetCommit(createLocalGitRefs(deps.git, root), base);
 }
 
 export async function captureExistingBranchHead(options: {
@@ -74,7 +58,7 @@ export async function restoreBranchRef(options: {
 	}
 }
 
-export async function rollbackNonPoolAdd(options: {
+export async function rollbackAdd(options: {
 	git: GitRunner;
 	root: string;
 	worktreePath: string;
@@ -87,24 +71,7 @@ export async function rollbackNonPoolAdd(options: {
 	await restoreBranchRef({ branch, branchState, git, originalBranchHead, root });
 }
 
-export async function rollbackPooledAllocation(options: {
-	git: GitRunner;
-	root: string;
-	slot: Slot;
-	branch: string;
-	branchState: BranchState;
-	originalBranchHead: string | null;
-	resetCommit: string;
-}): Promise<void> {
-	const { resetCommit, git, root, slot, branch, branchState, originalBranchHead } = options;
-	const placeholderBranch = `wk-pool/feat${slot.index}`;
-	await git.runRaw(["-C", slot.path, "checkout", "-f", "-B", placeholderBranch, resetCommit]);
-	await git.runRaw(["-C", slot.path, "reset", "--hard", placeholderBranch]);
-	await git.runRaw(["-C", slot.path, "clean", "-fd"]);
-	await restoreBranchRef({ branch, branchState, git, originalBranchHead, root });
-}
-
-export async function addNonPoolWorktree(options: {
+export async function addWorktree(options: {
 	git: GitRunner;
 	root: string;
 	path: string;
@@ -135,28 +102,6 @@ export async function addNonPoolWorktree(options: {
 	}
 	const startPoint = base ?? "HEAD";
 	await git.run(["-C", root, "worktree", "add", "--no-track", "-b", branch, path, startPoint]);
-}
-
-export async function checkoutBranchInSlot(options: {
-	git: GitRunner;
-	slotPath: string;
-	branch: string;
-	state: BranchState;
-	base: string | null;
-	progress: ProgressReporter;
-}): Promise<void> {
-	const { git, slotPath, branch, state, base, progress } = options;
-	warnIgnoredBase(state, base, progress);
-	if (state === "local" || state === "local-remote") {
-		await git.run(["-C", slotPath, "checkout", branch]);
-		return;
-	}
-	if (state === "remote") {
-		await git.run(["-C", slotPath, "checkout", "--no-track", "-B", branch, `origin/${branch}`]);
-		return;
-	}
-	const startPoint = base ?? "HEAD";
-	await git.run(["-C", slotPath, "checkout", "--no-track", "-B", branch, startPoint]);
 }
 
 export async function mergeOriginIfPresent(options: {

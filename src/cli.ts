@@ -25,15 +25,12 @@ const registrations = [
 	registerPath,
 	registerAdd,
 	registerRemove,
-	registerEnsure,
-	registerStatus,
 	registerCopy,
 	registerFinish,
 	registerIntegrate,
 	registerPick,
 	registerShellInit,
 	registerConfig,
-	registerSkills,
 ];
 
 export async function main(
@@ -67,7 +64,8 @@ function createProgram(json: boolean): Command {
 		)
 		.option(
 			"--interactive",
-			"Human wrapper mode: add opens the worktree's multiplexer session; remove and finish leave and close it",
+			"Allow focus/directory handoffs: add opens a session; " +
+				"remove/finish leave it only when cleanup removes the checkout",
 		)
 		.configureOutput({
 			writeErr: (str) => {
@@ -138,9 +136,7 @@ function registerList(program: Command, deps: Deps): void {
 	program
 		.command("list")
 		.summary("List worktrees")
-		.description(
-			"List every git worktree known to the repository, including canonical and pooled slots.",
-		)
+		.description("List registered Git worktrees, including the protected canonical root.")
 		.option("--json", "Output as JSON")
 		.addHelpText("after", HELP.list)
 		.action((_opts, command) => runAction("list", optsToArgs(command.optsWithGlobals()), deps));
@@ -161,7 +157,8 @@ function registerPath(program: Command, deps: Deps): void {
 		.command("path")
 		.summary("Resolve branch path")
 		.description(
-			"Print the deterministic worktree path for a branch in the repository containing --cwd (or the " +
+			"Print the registered checkout path or deterministic expected path for a branch " +
+				"in the repository containing --cwd (or the " +
 				"current directory by default).",
 		)
 		.requiredOption("--branch <branch>", "Branch name")
@@ -172,13 +169,12 @@ function registerPath(program: Command, deps: Deps): void {
 function registerAdd(program: Command, deps: Deps): void {
 	program
 		.command("add")
-		.summary("Create or allocate worktree")
+		.summary("Create worktree")
 		.description(
-			"Create a regular worktree or allocate a pooled slot for a branch, applying add policy and setup.",
+			"Create a worktree for a new or existing branch, applying freshness policy and configured setup.",
 		)
 		.requiredOption("--branch <branch>", "Branch name")
 		.option("--json", "Machine-readable output")
-		.option("--slot <path>", "Specific configured pool slot path, including a missing slot")
 		.option("--base <ref>", "Base ref for new branches")
 		.option("--base-current", "Use the branch checked out in the worktree containing --cwd")
 		.option(
@@ -186,7 +182,6 @@ function registerAdd(program: Command, deps: Deps): void {
 			"Use cached/local refs with normal policy; skip remote checks and fetch",
 		)
 		.option("--skip-command", "Skip configured bootstrap; retain copy setup and safety checks")
-		.option("--force", "Force operation")
 		.addHelpText("after", HELP.add)
 		.action((_opts, command) => runAction("add", optsToArgs(command.optsWithGlobals()), deps));
 }
@@ -196,13 +191,13 @@ function registerRemove(program: Command, deps: Deps): void {
 		.command("remove")
 		.summary("Remove worktree")
 		.description(
-			"Remove a regular worktree or free a pooled worktree slot, refusing unsafe states unless forced.",
+			"Remove a non-canonical worktree and its branch, refusing dirty or unmerged work unless forced.",
 		)
 		.option("--branch <branch>", "Branch to remove")
 		.option("--self", "Remove the worktree containing --cwd")
 		.option("--json", "Machine-readable output")
 		.option("--force", "Force removal")
-		.option("--keep-branch", "Remove/free worktree without deleting branch")
+		.option("--keep-branch", "Remove worktree without deleting branch")
 		.option(
 			"--integrated-into-local <branch>",
 			"Prove pinned local ancestry and remove a regular --self checkout",
@@ -221,26 +216,6 @@ function registerRemove(program: Command, deps: Deps): void {
 		)
 		.addHelpText("after", HELP.remove)
 		.action((_opts, command) => runAction("remove", optsToArgs(command.optsWithGlobals()), deps));
-}
-
-function registerEnsure(program: Command, deps: Deps): void {
-	program
-		.command("ensure")
-		.summary("Materialise pool slots")
-		.description("Create and initialize the configured fixed pool slots for a pooled repository.")
-		.addHelpText("after", HELP.ensure)
-		.action((_opts, command) => runAction("ensure", optsToArgs(command.optsWithGlobals()), deps));
-}
-
-function registerStatus(program: Command, deps: Deps): void {
-	program
-		.command("status")
-		.summary("Show pool status")
-		.description(
-			"Print JSON describing configured pool size and each slot's branch, safety, and initialization state.",
-		)
-		.addHelpText("after", HELP.status)
-		.action((_opts, command) => runAction("status", optsToArgs(command.optsWithGlobals()), deps));
 }
 
 function registerCopy(program: Command, deps: Deps): void {
@@ -336,40 +311,6 @@ function registerConfig(program: Command, deps: Deps): void {
 		.addHelpText("after", HELP.explain)
 		.action((_opts, command) =>
 			runAction("config", ["explain", ...optsToArgs(command.optsWithGlobals())], deps),
-		);
-}
-
-function registerSkills(program: Command, deps: Deps): void {
-	const skills = program
-		.command("skills")
-		.summary("Read bundled agent skills")
-		.description(
-			"List or read instructions bundled with this Wktree version; works outside a repository.",
-		)
-		.option("--json", "Machine-readable output")
-		.action((_opts, command) =>
-			runAction("skills", ["list", ...optsToArgs(command.optsWithGlobals())], deps),
-		);
-	skills
-		.command("list")
-		.description("List names and descriptions; --json also includes resource paths")
-		.option("--json", "Machine-readable output")
-		.action((_opts, command) =>
-			runAction("skills", ["list", ...optsToArgs(command.optsWithGlobals())], deps),
-		);
-	skills
-		.command("get <name>")
-		.description("Print a skill's Markdown body without frontmatter")
-		.option("--json", "Machine-readable output")
-		.action((name: string, _opts, command) =>
-			runAction("skills", ["get", name, ...optsToArgs(command.optsWithGlobals())], deps),
-		);
-	const file = skills
-		.command("file <name> <path>")
-		.description("Print a resource using its path relative to the skill directory")
-		.option("--json", "Machine-readable output")
-		.action((name: string, path: string) =>
-			runAction("skills", ["file", name, path, ...optsToArgs(file.optsWithGlobals())], deps),
 		);
 }
 

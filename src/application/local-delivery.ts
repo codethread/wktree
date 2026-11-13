@@ -231,8 +231,7 @@ function requireActiveBranch(worktree: Worktree): string {
 		worktree.bare ||
 		worktree.detached ||
 		worktree.locked ||
-		worktree.prunable ||
-		worktree.pool?.placeholder
+		worktree.prunable
 	) {
 		throw new BlockedError(`worktree must have an active unlocked local branch: ${worktree.path}`);
 	}

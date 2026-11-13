@@ -20,8 +20,6 @@ import { join } from "node:path";
 /* oxlint-disable-next-line import/no-nodejs-modules -- fixtures live in the host temporary directory */
 import { tmpdir } from "node:os";
 
-const POOL_SIZE = 1;
-
 const { initRepoWithOrigin } = useOriginFixture();
 
 function interactiveDeps(attached = true) {
@@ -148,26 +146,6 @@ describe("wktree --interactive remove", () => {
 });
 
 describe("wktree --interactive sessions", () => {
-	test("pooled add opens the slot and pooled remove leaves and closes it #test-217", async () => {
-		writeConfig({ command: "echo ready", poolSize: POOL_SIZE, root, tmp });
-		const { deps, log } = interactiveDeps();
-		const slotPath = `${root}__feat1`;
-
-		await run(
-			"add",
-			["--cwd", root, "--branch", "feature/pooled", "--json", "--interactive"],
-			deps,
-		);
-		await run(
-			"remove",
-			["--cwd", slotPath, "--branch", "feature/pooled", "--keep-branch", "--json", "--interactive"],
-			deps,
-		);
-
-		expect(await pathExists(slotPath)).toBe(true);
-		expect(log).toEqual([`open ${slotPath}`, `cd ${root}`, `close ${slotPath}`]);
-	});
-
 	test("session failures warn without undoing the removal #test-219", async () => {
 		const { deps, warnings } = interactiveDeps();
 		await createWorktree({ root, branch: "feature/warn", path: `${root}__feature--warn` });

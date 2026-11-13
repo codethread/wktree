@@ -26,7 +26,7 @@ async function setupUnmergedWorktree(home: string, branch: string) {
 	return { path, root };
 }
 
-test("removes a non-pool worktree and branch #test-228", async () => {
+test("removes a worktree and branch #test-228", async () => {
 	const { root } = await initRepoWithOrigin(tmp.dir);
 	writeConfig({ command: "echo ready", root, tmp: tmp.dir });
 	await createWorktree({ root, branch: "feature/remove", path: `${root}__feature--remove` });
@@ -88,16 +88,6 @@ test("non-json remove prints a one-line summary to stderr #test-229", async () =
 	expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
 	expect(result.stdout).toBeUndefined();
 	expect(result.stderr).toBe(`wktree: removed worktree at ${root}__feature--human-remove\n`);
-});
-
-test("removes non-pool branches whose encoded paths resemble pool slots #test-231", async () => {
-	const { root } = await initRepoWithOrigin(tmp.dir);
-	writeConfig({ command: "echo ready", root, tmp: tmp.dir });
-	await createWorktree({ root, branch: "feat1", path: `${root}__feat1` });
-
-	await dispatch("remove", ["--cwd", root, "--branch", "feat1", "--json"], deps);
-
-	expect(await pathExists(`${root}__feat1`)).toBe(false);
 });
 
 test("unmerged branch fails without --force and succeeds with --force #test-232", async () => {

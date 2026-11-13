@@ -82,8 +82,5 @@ export function createMemoryWorktreeInventory(options: {
 // --- Private helpers ---
 
 function cloneWorktrees(worktrees: readonly Worktree[]): Worktree[] {
-	return worktrees.map((worktree) => ({
-		...worktree,
-		pool: worktree.pool && { ...worktree.pool },
-	}));
+	return worktrees.map((worktree) => ({ ...worktree }));
 }

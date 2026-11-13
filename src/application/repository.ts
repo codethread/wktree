@@ -23,7 +23,7 @@ export async function readWorktreeTree(runner: GitRunner, cwd: string): Promise<
 	const git = withoutLazyFetch(runner);
 	const worktrees = await listWorktrees(git, cwd);
 	const { defaultBranch, comparisons } = await readDefaultComparisons(git, cwd, worktrees);
-	const ancestors = await readActiveAncestors(git, cwd, worktrees);
+	const ancestors = await readWorktreeAncestors(git, cwd, worktrees);
 	return buildWorktreeTree({ worktrees, ancestors, defaultBranch, comparisons });
 }
 
@@ -96,13 +96,10 @@ async function readDefaultComparisons(git: GitRunner, cwd: string, worktrees: Wo
 	return { defaultBranch, comparisons };
 }
 
-async function readActiveAncestors(git: GitRunner, cwd: string, worktrees: Worktree[]) {
+async function readWorktreeAncestors(git: GitRunner, cwd: string, worktrees: Worktree[]) {
 	const heads = [
 		...new Set(
-			worktrees
-				.filter((worktree) => !worktree.pool?.placeholder)
-				.map((worktree) => worktreeCommit(worktree))
-				.filter((head) => head !== undefined),
+			worktrees.map((worktree) => worktreeCommit(worktree)).filter((head) => head !== undefined),
 		),
 	];
 	const ancestors = new Map<string, Set<string>>();

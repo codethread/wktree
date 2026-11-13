@@ -23,7 +23,7 @@ export async function focusWorktree(
 }
 
 /**
- * Plan leaving a worktree that is about to be removed or recycled. Call it while the
+ * Plan leaving a worktree that is about to be removed. Call it while the
  * worktree still exists so the caller's directory resolves; run the returned step after
  * all output, because closing the invoking session may end this process.
  */

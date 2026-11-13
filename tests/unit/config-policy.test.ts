@@ -1,4 +1,4 @@
-/* eslint-disable unicorn/no-null -- Null models command inheritance, no pool, and no hook value or source. */
+/* eslint-disable unicorn/no-null -- Null models command inheritance and no hook value or source. */
 import { expect, test } from "bun:test";
 import {
 	explainPolicy,
@@ -68,7 +68,6 @@ test("exact project command overrides inherited rule command #test-483", () => {
 				command: "echo project",
 				copy: [],
 				copyModeDefault: "copy",
-				poolSize: 1,
 			},
 		],
 	};
@@ -91,7 +90,6 @@ const preRemoteConfig: TreesConfig = {
 			command: "setup",
 			copy: [],
 			copyModeDefault: "copy",
-			poolSize: 1,
 			preRemoteCheck: "echo project >&2",
 		},
 	],
@@ -143,7 +141,6 @@ test("exact project policy overrides matching rules without a project command", 
 				command: null,
 				copy: [],
 				copyModeDefault: "copy",
-				poolSize: null,
 				add: { policy: "origin_default" },
 				finish: { enabled: false },
 			},
@@ -170,7 +167,6 @@ test("finish policy merges field-by-field across defaults rules and project", ()
 					command: "setup",
 					copy: [],
 					copyModeDefault: "copy",
-					poolSize: 1,
 					finish: { deleteBranch: true },
 				},
 			],

@@ -3,11 +3,9 @@ import type { CommandResult, OutputMode } from "./protocol.ts";
 import {
 	configCommand,
 	copyCommand,
-	ensureCommand,
 	listCommand,
 	pathCommand,
 	rootCommand,
-	statusCommand,
 	treeCommand,
 } from "./commands/query.ts";
 import { createJsonCollector, formatFailure } from "./protocol.ts";
@@ -19,7 +17,6 @@ import { integrateCommand } from "./commands/integrate.ts";
 import { pickCommand } from "./commands/pick.ts";
 import { removeCommand } from "./commands/remove.ts";
 import { shellInitCommand } from "./commands/shell-init.ts";
-import { skillsCommand } from "./commands/skills.ts";
 
 const handlers: Partial<
 	Record<string, (args: string[], deps: Deps) => Promise<CommandResult> | CommandResult>
@@ -27,7 +24,6 @@ const handlers: Partial<
 	add: addCommand,
 	config: configCommand,
 	copy: copyCommand,
-	ensure: ensureCommand,
 	finish: finishCommand,
 	integrate: integrateCommand,
 	list: listCommand,
@@ -36,8 +32,6 @@ const handlers: Partial<
 	remove: removeCommand,
 	root: rootCommand,
 	"shell-init": shellInitCommand,
-	skills: skillsCommand,
-	status: statusCommand,
 	tree: treeCommand,
 };
 
@@ -56,7 +50,7 @@ export async function dispatch(
 	args: string[],
 	deps: Deps,
 ): Promise<CommandResult> {
-	const output: OutputMode = { json: subcommand === "status" || args.includes("--json") };
+	const output: OutputMode = { json: args.includes("--json") };
 	const request = { args, output, subcommand };
 	if (!output.json) {
 		return routeFormatted(request, deps);

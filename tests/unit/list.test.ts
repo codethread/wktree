@@ -7,18 +7,18 @@ const absent = null;
 const worktrees: Worktree[] = [
 	{ path: "/repo", head: "1234567890abcdef", branch: "main", canonical: true, pool: absent },
 	{
-		path: "/repo__feat1",
+		path: "/repo/feature-ready",
 		head: "abcdef1234567890",
 		branch: "feature/ready",
 		canonical: false,
-		pool: { index: 1, placeholder: false },
+		pool: absent,
 	},
 	{
-		path: "/repo__feat2",
+		path: "/repo/feature-legacy",
 		head: "1234567890abcdef",
-		branch: "wk-pool/feat2",
+		branch: "feature/legacy",
 		canonical: false,
-		pool: { index: 2, placeholder: true },
+		pool: absent,
 	},
 ].map((worktree) =>
 	Object.assign(worktree, {
@@ -32,11 +32,11 @@ const worktrees: Worktree[] = [
 	}),
 );
 
-test("list text renders canonical and pool-slot markers from supplied inventory", () => {
+test("list text renders branch and canonical labels from supplied inventory", () => {
 	expect(formatWorktreeList(worktrees)).toMatchInlineSnapshot(`
 		"/repo  1234567 [main] [canonical]
-		/repo__feat1  abcdef1 [feature/ready] [pool:feat1]
-		/repo__feat2  1234567 [wk-pool/feat2] [pool:free]
+		/repo/feature-ready  abcdef1 [feature/ready]
+		/repo/feature-legacy  1234567 [feature/legacy]
 		"
 	`);
 });

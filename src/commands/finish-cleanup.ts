@@ -1,10 +1,8 @@
-import type { Deps, GitRunner, WorkspaceFiles } from "../services.ts";
+import type { Deps, GitRunner } from "../services.ts";
 import { EXIT_CODES, PushRejectedError, UsageError } from "../errors.ts";
-import type { PolicyExplanation, ProjectConfig, WorktreeLocation } from "../domain/config.ts";
-import { buildPoolState, ensurePlaceholderBranch } from "../application/pool.ts";
+import type { PolicyExplanation } from "../domain/config.ts";
 import type { Worktree } from "../domain/worktree.ts";
 import { assertCleanSource } from "./finish-integration.ts";
-import { listWorktrees } from "../git/worktrees.ts";
 import { planLeaveWorktree } from "../application/interactive.ts";
 
 type FinishPolicyPlan = PolicyExplanation["finishPolicy"];
@@ -20,12 +18,8 @@ interface CleanupOptions {
 	cleanupActions: string[];
 	/** Service boundary for the command invocation. */
 	deps: Deps;
-	/** Resolved policy for the canonical root. */
-	explanation: PolicyExplanation;
 	/** Validated cleanup policy. */
 	plan: FinishPolicyPlan;
-	/** Project matching the canonical root, when configured. */
-	project: ProjectConfig | undefined;
 	/** Validated command-line request. */
 	request: FinishRequest;
 	/** Canonical path reported by Git, used for cleanup mutations. */
@@ -74,88 +68,21 @@ async function pushFinishedBranch(options: {
 	options.cleanupActions.push("push");
 }
 
-async function recycleFinishedSlot(options: {
-	deleteBranch: boolean;
-	files: WorkspaceFiles;
-	git: GitRunner;
-	project: ProjectConfig;
-	root: string;
-	source: Worktree;
-	sourceBranch: string;
-	worktreeLocation: WorktreeLocation;
-}): Promise<void> {
-	const state = await buildPoolState({
-		deps: { files: options.files, git: options.git },
-		location: options.worktreeLocation,
-		project: options.project,
-		worktrees: await listWorktrees(options.git, options.root),
-	});
-	const slot = state.slots.find(
-		(candidate) =>
-			options.files.normalizePath(candidate.path) ===
-			options.files.normalizePath(options.source.path),
-	);
-	if (!slot) {
-		throw new UsageError(`pool slot not found: ${options.source.path}`);
-	}
-	const placeholderBranch = `wk-pool/feat${slot.index}`;
-	await ensurePlaceholderBranch({
-		branch: placeholderBranch,
-		git: options.git,
-		root: options.root,
-		trunk: state.trunk,
-	});
-	await options.git.run([
-		"-C",
-		options.source.path,
-		"checkout",
-		"-B",
-		placeholderBranch,
-		`origin/${state.trunk}`,
-	]);
-	if (options.deleteBranch) {
-		await options.git.run(["-C", options.root, "branch", "-D", options.sourceBranch]);
-	}
-}
-
 async function cleanupFinishedWorktree(options: {
 	deleteBranch: boolean;
-	files: WorkspaceFiles;
 	git: GitRunner;
-	project: ProjectConfig | undefined;
 	root: string;
 	source: Worktree;
-	worktreeLocation: WorktreeLocation;
 }): Promise<void> {
-	const { deleteBranch, files, git, project, root, source, worktreeLocation } = options;
+	const { deleteBranch, git, root, source } = options;
 	if (!source.branch) {
 		throw new UsageError("finish cleanup requires a source branch");
 	}
 	await assertCleanSource(git, source);
-	if (project?.poolSize && source.pool) {
-		await recycleFinishedSlot({
-			deleteBranch,
-			files,
-			git,
-			project,
-			root,
-			source,
-			sourceBranch: source.branch,
-			worktreeLocation,
-		});
-		return;
-	}
 	await git.run(["-C", root, "worktree", "remove", source.path]);
 	if (deleteBranch) {
 		await git.run(["-C", root, "branch", "-D", source.branch]);
 	}
-}
-
-function cleanupActionFor(source: Worktree): string {
-	if (source.pool) {
-		return "recycle_worktree";
-	}
-	return "remove_worktree";
 }
 
 async function cleanupSourceWorktree(
@@ -174,14 +101,11 @@ async function cleanupSourceWorktree(
 	}
 	await cleanupFinishedWorktree({
 		deleteBranch: options.plan.deleteBranch,
-		files: options.deps.files,
 		git: options.deps.git,
-		project: options.project,
 		root: options.root,
 		source: options.source,
-		worktreeLocation: options.explanation.worktreeLocation,
 	});
-	options.cleanupActions.push(cleanupActionFor(options.source));
+	options.cleanupActions.push("remove_worktree");
 	if (options.plan.deleteBranch) {
 		options.cleanupActions.push("delete_branch");
 	}

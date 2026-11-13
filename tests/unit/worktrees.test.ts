@@ -53,13 +53,6 @@ const checkoutCases = [
 	},
 ];
 
-const poolCases = [
-	{ branch: "wk-pool/feat1", index: 1, path: "/repo__feat1", placeholder: true },
-	{ branch: "my-feature", index: 2, path: "/repo__feat2", placeholder: false },
-	{ branch: "wk-pool/feat3", index: 3, path: "/repo/.worktrees/feat3", placeholder: true },
-	{ branch: "wk-pool/feat4", index: 4, path: "/repo/.wktree/feat4", placeholder: true },
-];
-
 const symbolicRefCases = [
 	{ expected: "main", input: "refs/remotes/origin/main\n", name: "main" },
 	{ expected: "develop", input: "refs/remotes/origin/develop\n", name: "develop" },
@@ -98,20 +91,13 @@ describe("git worktree parsers", () => {
 				// eslint-disable-next-line unicorn/no-null -- Porcelain omits a lock reason when unlocked.
 				lockReason: null,
 				locked: false,
-				// eslint-disable-next-line unicorn/no-null -- A canonical checkout has no pool slot.
+				// eslint-disable-next-line unicorn/no-null -- Pool inventory is retired; the compatibility field is null.
 				pool: null,
 				prunable: false,
 				// eslint-disable-next-line unicorn/no-null -- Porcelain omits a prunable reason when not prunable.
 				prunableReason: null,
 			},
 		]);
-	});
-
-	test.each(poolCases)("recognizes pool slot $path", ({ path, branch, index, placeholder }) => {
-		const [, slot] = parseWorktreeList(
-			`worktree /repo\nHEAD aaa\nbranch refs/heads/main\n\nworktree ${path}\nHEAD bbb\nbranch refs/heads/${branch}\n`,
-		);
-		expect(slot).toMatchObject({ branch, canonical: false, path, pool: { index, placeholder } });
 	});
 
 	test.each(symbolicRefCases)("parses symbolic-ref: $name", ({ input, expected }) => {
@@ -133,9 +119,9 @@ describe("git worktree parsers", () => {
 test.each([
 	{ fields: "locked", locked: true, lockReason: null, prunable: false, prunableReason: null },
 	{
-		fields: "locked keep slot",
+		fields: "locked keep worktree",
 		locked: true,
-		lockReason: "keep slot",
+		lockReason: "keep worktree",
 		prunable: false,
 		prunableReason: null,
 	},

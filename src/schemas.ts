@@ -7,7 +7,6 @@ import { z } from "zod";
 const MINIMUM_LIST_LENGTH = 1;
 
 export const CopyModeSchema = z.enum(["copy", "symlink"]);
-export const PoolSizeSchema = z.number().int().min(MINIMUM_LIST_LENGTH);
 
 const NonEmptyStringSchema = z.string().regex(/\S/u, "must be a non-empty string");
 // Filesystem paths cannot contain a null byte; also emit this constraint for editors.
@@ -91,9 +90,6 @@ const RepositoryOptionsShape = {
 		"Default copy mode; falls back to copy. Explicitly setting it requires an effective command.",
 	),
 	name: z.string().optional().describe("Display name; defaults to the expanded root's basename."),
-	pool_size: PoolSizeSchema.optional().describe(
-		"Fixed pool size; requires an effective bootstrap command.",
-	),
 	...SetupShape,
 	...PolicyShape,
 };
@@ -182,11 +178,7 @@ function expandProjects(config: ConfigOutput, context: ConfigPathContext): Proje
 }
 
 function requiresCommand(project: ProjectOutput): boolean {
-	return (
-		project.pool_size !== undefined ||
-		project.copy.length >= MINIMUM_LIST_LENGTH ||
-		project.copy_mode_default !== undefined
-	);
+	return project.copy.length >= MINIMUM_LIST_LENGTH || project.copy_mode_default !== undefined;
 }
 
 function validateProject(
@@ -215,7 +207,7 @@ function validateProject(
 	}
 	return [
 		{
-			message: `root \`${state.root}\` requires an effective command for pooled or copy setup`,
+			message: `root \`${state.root}\` requires an effective command for copy setup`,
 			path: ["project", state.index, "command"],
 		},
 	];

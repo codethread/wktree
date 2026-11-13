@@ -213,6 +213,5 @@ export {
 	toListJson,
 	toRemovePayload,
 	toTreePayload,
-	type PoolFullPayload,
 	type ReadyAddPayload,
 } from "./protocol-payloads.ts";

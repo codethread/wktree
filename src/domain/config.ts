@@ -59,8 +59,6 @@ export interface ProjectConfig extends PolicyTables {
 	worktreeLocation?: WorktreeLocation;
 	/** Overrides the inherited pre-remote hook when specified. */
 	preRemoteCheck?: string | null;
-	/** Number of fixed slots, or null for ordinary worktrees. */
-	poolSize: number | null;
 	/** Default materialization mode for this project's copy entries. */
 	copyModeDefault: CopyMode;
 	/** Files to materialize before running the bootstrap command. */
@@ -100,8 +98,6 @@ export interface RepositoryOptions extends PolicyTables {
 	preRemoteCheck?: string;
 	/** Placement override for new worktrees. */
 	worktreeLocation?: WorktreeLocation;
-	/** Fixed pool size override. */
-	poolSize?: number;
 	/** Default mode for copy entries supplied by this file. */
 	copyModeDefault?: CopyMode;
 	/** Replacement copy list; an empty list disables inherited copying. */
@@ -317,13 +313,11 @@ function applyLocalToProject(
 		return project;
 	}
 	return {
-		// oxlint-disable-next-line unicorn/no-null -- Unconfigured bootstrap and pools retain their explicit absent values.
+		// oxlint-disable-next-line unicorn/no-null -- An unconfigured bootstrap retains its explicit absent value.
 		command: null,
 		copy: [],
 		copyModeDefault: "copy",
 		name: basename(local.root),
-		// oxlint-disable-next-line unicorn/no-null -- A repository without a pool has no fixed slot count.
-		poolSize: null,
 		...project,
 		...local.options,
 		finish: { ...project?.finish, ...local.options.finish },

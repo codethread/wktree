@@ -74,12 +74,6 @@
 			"description": "Display name; defaults to the expanded root's basename.",
 			"type": "string"
 		},
-		"pool_size": {
-			"description": "Fixed pool size; requires an effective bootstrap command.",
-			"type": "integer",
-			"minimum": 1,
-			"maximum": 9007199254740991
-		},
 		"command": {
 			"description": "Bootstrap command run under bash; omitted values inherit from earlier layers.",
 			"type": "string",

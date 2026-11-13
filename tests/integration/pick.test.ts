@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 function pickDeps(choice: string | null, attached = true) {
-	const picker = createTestPicker(choice, true);
+	const picker = createTestPicker(choice);
 	const multiplexer = createTestMultiplexer(attached);
 	const cdDirective = createTestCdDirective();
 	return {

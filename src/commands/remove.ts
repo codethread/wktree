@@ -1,6 +1,5 @@
 /* eslint-disable import/max-dependencies -- Route local proof cleanup alongside the existing lifecycle command. */
 import type { CommandResult, OutputMode } from "../protocol.ts";
-import type { ProjectConfig, TreesConfig, WorktreeLocation } from "../domain/config.ts";
 import { UsageError, WktreeError, withFailureContext } from "../errors.ts";
 import {
 	assertBranchIntegratedInto,
@@ -14,10 +13,10 @@ import {
 	toRemovePayload,
 } from "../protocol.ts";
 import type { Deps } from "../services.ts";
+import type { TreesConfig } from "../domain/config.ts";
 import type { Worktree } from "../domain/worktree.ts";
 import { listWorktrees } from "../git/worktrees.ts";
 import { planLeaveWorktree } from "../application/interactive.ts";
-import { recycleSlot } from "../application/pool.ts";
 import { removeLocalCommand } from "./remove-local.ts";
 import { resolveRemoveTarget } from "../application/repository.ts";
 import { runPreRemoteCheck } from "../application/hooks.ts";
@@ -46,10 +45,6 @@ interface RemoveContext {
 	canonical: Worktree;
 	/** Loaded repository configuration. */
 	config: TreesConfig;
-	/** Project matching the canonical root, when configured. */
-	project: ProjectConfig | undefined;
-	/** Configured worktree placement. */
-	worktreeLocation: WorktreeLocation;
 	/** Worktrees observed before removal. */
 	worktrees: Worktree[];
 }
@@ -61,7 +56,7 @@ interface RemoveOperation {
 	request: RemoveRequest;
 	/** Repository state observed before removal. */
 	context: RemoveContext;
-	/** Worktree selected for removal or recycling. */
+	/** Worktree selected for removal. */
 	target: Worktree;
 }
 
@@ -100,7 +95,7 @@ function optionalRef(value: string | boolean | undefined): string | null {
 	if (typeof value === "string") {
 		return value;
 	}
-	// eslint-disable-next-line unicorn/no-null -- resolveRemoveTarget and recycleSlot model an absent branch/ref as null.
+	// eslint-disable-next-line unicorn/no-null -- resolveRemoveTarget models an absent branch/ref as null.
 	return null;
 }
 
@@ -145,12 +140,9 @@ async function resolveRemoveContext(request: RemoveRequest, deps: Deps): Promise
 		throw new WktreeError("couldn't determine canonical worktree");
 	}
 	const config = deps.config.read(canonical.path);
-	const explanation = deps.config.explain(config, canonical.path);
 	return {
 		canonical,
 		config,
-		project: explanation.project,
-		worktreeLocation: explanation.worktreeLocation,
 		worktrees,
 	};
 }
@@ -160,14 +152,12 @@ async function runRemovalPreflight(
 	deps: Deps,
 	context: RemoveContext,
 ): Promise<void> {
-	const { canonical, config, project } = context;
-	if (!request.integratedInto && !project?.poolSize) {
+	const { canonical, config } = context;
+	if (!request.integratedInto) {
 		return;
 	}
 	await runPreRemoteCheck(deps, { config, operation: "wktree remove", root: canonical.path });
-	if (request.integratedInto) {
-		await deps.git.run(["-C", canonical.path, "fetch", "origin"]);
-	}
+	await deps.git.run(["-C", canonical.path, "fetch", "origin"]);
 }
 
 function buildAfterOutput(operation: RemoveOperation): (() => Promise<void>) | undefined {
@@ -223,44 +213,8 @@ async function removeInputWorktree(operation: RemoveOperation): Promise<void> {
 	await deleteTargetBranch(operation);
 }
 
-function removeSummary(removed: boolean, worktreePath: string): string {
-	if (removed) {
-		return `wktree: removed worktree at ${worktreePath}`;
-	}
-	return `wktree: recycled pool slot at ${worktreePath}`;
-}
-
-async function recyclePoolSlot(
-	operation: RemoveOperation,
-	project: ProjectConfig,
-): Promise<CommandResult> {
-	const { context, deps, request, target } = operation;
-	const afterOutput = buildAfterOutput(operation);
-	await recycleSlot({
-		files: deps.files,
-		force: request.force,
-		git: deps.git,
-		integratedInto: request.integratedInto,
-		keepBranch: request.keepBranch,
-		project,
-		root: context.canonical.path,
-		slotPath: target.path,
-		worktreeLocation: context.worktreeLocation,
-	});
-	return finalizeReadyResult({
-		afterOutput,
-		output: request.output,
-		payload: toRemovePayload({ removed: false, worktreePath: target.path }),
-		summary: `wktree: recycled pool slot at ${target.path}`,
-	});
-}
-
 async function removeTarget(operation: RemoveOperation): Promise<CommandResult> {
-	const { context, deps, request, target } = operation;
-	const { project } = context;
-	if (project?.poolSize && target.pool) {
-		return recyclePoolSlot(operation, project);
-	}
+	const { deps, request, target } = operation;
 	const afterOutput = buildAfterOutput(operation);
 	await assertRemovableBranch(operation);
 	await removeInputWorktree(operation);
@@ -272,6 +226,6 @@ async function removeTarget(operation: RemoveOperation): Promise<CommandResult> 
 		afterOutput,
 		output: request.output,
 		payload,
-		summary: removeSummary(payload.removed, payload.worktree_path),
+		summary: `wktree: removed worktree at ${payload.worktree_path}`,
 	});
 }

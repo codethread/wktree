@@ -1,13 +1,5 @@
-import {
-	BlockedError,
-	CanonicalRootError,
-	EXIT_CODES,
-	UsageError,
-	WktreeError,
-} from "../errors.ts";
+import { CanonicalRootError, EXIT_CODES, UsageError, WktreeError } from "../errors.ts";
 import type { CommandResult, OutputMode } from "../protocol.ts";
-import type { PolicyExplanation, ProjectConfig, TreesConfig } from "../domain/config.ts";
-import { buildPoolState, ensurePool } from "../application/pool.ts";
 import { encodeBranch, worktreePathForName } from "../domain/worktree.ts";
 import {
 	finalizeReadyResult,
@@ -30,7 +22,6 @@ import {
 import type { Deps } from "../services.ts";
 import type { Worktree } from "../domain/worktree.ts";
 import { listWorktrees } from "../git/worktrees.ts";
-import { runPreRemoteCheck } from "../application/hooks.ts";
 
 interface QueryRequest {
 	/** Checkout the caller is working from. */
@@ -44,21 +35,6 @@ interface PathRequest {
 	branch: string;
 	/** Checkout the caller is working from. */
 	cwd: string;
-}
-
-interface EnsurePoolOptions {
-	/** Loaded repository configuration. */
-	config: TreesConfig;
-	/** Service boundary for the command invocation. */
-	deps: Deps;
-	/** Operation name used in preflight failures. */
-	operation: string;
-	/** Project matching the canonical root, when configured. */
-	project: ProjectConfig | undefined;
-	/** Canonical repository root. */
-	root: string;
-	/** Worktrees observed before pool preparation. */
-	worktrees: Worktree[];
 }
 
 export async function rootCommand(args: string[], deps: Deps): Promise<CommandResult> {
@@ -93,48 +69,12 @@ export async function pathCommand(args: string[], deps: Deps): Promise<CommandRe
 		return { exitCode: EXIT_CODES.SUCCESS, stdout: `${existing.path}\n` };
 	}
 	const explanation = deps.config.explain(config, canonical.path);
-	const path = await findWorktreePath({
-		branch: request.branch,
-		canonical,
-		config,
-		deps,
-		explanation,
-		worktrees,
-	});
+	const path = worktreePathForName(
+		canonical.path,
+		encodeBranch(request.branch),
+		explanation.worktreeLocation,
+	);
 	return { exitCode: EXIT_CODES.SUCCESS, stdout: `${path}\n` };
-}
-
-export async function ensureCommand(args: string[], deps: Deps): Promise<CommandResult> {
-	const request = parseQueryRequest(args);
-	const worktrees = await listWorktrees(deps.git, request.cwd);
-	const canonical = requireCanonical(worktrees);
-	const config = deps.config.read(canonical.path);
-	const { project } = deps.config.explain(config, canonical.path);
-	await ensurePoolIfConfigured({
-		config,
-		deps,
-		operation: "wktree ensure",
-		project,
-		root: canonical.path,
-		worktrees,
-	});
-	return { exitCode: EXIT_CODES.SUCCESS };
-}
-
-export async function statusCommand(args: string[], deps: Deps): Promise<CommandResult> {
-	const request = parseQueryRequest(args);
-	const worktrees = await listWorktrees(deps.git, request.cwd);
-	const canonical = requireCanonical(worktrees);
-	const config = deps.config.read(canonical.path);
-	const explanation = deps.config.explain(config, canonical.path);
-	const payload = await statusPayload({
-		config,
-		deps,
-		explanation,
-		root: canonical.path,
-		worktrees,
-	});
-	return finalizeStructuredResult(payload, { json: true });
 }
 
 export async function copyCommand(args: string[], deps: Deps): Promise<CommandResult> {
@@ -200,23 +140,6 @@ function parsePathRequest(args: string[]): PathRequest {
 	return { branch: requireOption(opts, "branch"), cwd };
 }
 
-async function ensurePoolIfConfigured(options: EnsurePoolOptions): Promise<void> {
-	if (!options.project?.poolSize) {
-		return;
-	}
-	await runPreRemoteCheck(options.deps, {
-		config: options.config,
-		operation: options.operation,
-		root: options.root,
-	});
-	await ensurePool({
-		config: options.config,
-		deps: options.deps,
-		initialWorktrees: options.worktrees,
-		project: options.project,
-	});
-}
-
 function renderList(worktrees: Worktree[], output: OutputMode): CommandResult {
 	if (output.json) {
 		return finalizeStructuredResult(
@@ -225,57 +148,6 @@ function renderList(worktrees: Worktree[], output: OutputMode): CommandResult {
 		);
 	}
 	return { exitCode: EXIT_CODES.SUCCESS, stdout: formatWorktreeList(worktrees) };
-}
-
-async function findWorktreePath(options: {
-	branch: string;
-	canonical: Worktree;
-	config: TreesConfig;
-	deps: Deps;
-	explanation: PolicyExplanation;
-	worktrees: Worktree[];
-}): Promise<string> {
-	const { branch, canonical, config, deps, explanation, worktrees } = options;
-	const { project } = explanation;
-	if (!project?.poolSize) {
-		return worktreePathForName(canonical.path, encodeBranch(branch), explanation.worktreeLocation);
-	}
-	await runPreRemoteCheck(deps, { config, operation: "wktree path", root: canonical.path });
-	const state = await buildPoolState({
-		deps,
-		location: explanation.worktreeLocation,
-		project,
-		worktrees,
-	});
-	const slot = state.slots.find((candidate) => candidate.branch === branch);
-	if (!slot) {
-		throw new BlockedError(`no pooled worktree found for branch ${branch}`);
-	}
-	return slot.path;
-}
-
-async function statusPayload(options: {
-	config: TreesConfig;
-	deps: Deps;
-	explanation: PolicyExplanation;
-	root: string;
-	worktrees: Worktree[];
-}) {
-	const { config, deps, explanation, root, worktrees } = options;
-	const { project } = explanation;
-	if (!project?.poolSize) {
-		// Public status JSON includes an explicit null trunk when no pool exists.
-		// eslint-disable-next-line unicorn/no-null
-		return { hasPool: false, kind: "status", root, size: 0, slots: [], trunk: null };
-	}
-	await runPreRemoteCheck(deps, { config, operation: "wktree status", root });
-	const state = await buildPoolState({
-		deps,
-		location: explanation.worktreeLocation,
-		project,
-		worktrees,
-	});
-	return { kind: "status", ...state };
 }
 
 function resolveCopyTarget(options: {

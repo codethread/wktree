@@ -8,12 +8,7 @@ import {
 	withFailureContext,
 } from "../errors.ts";
 import type { CommandResult, OutputMode } from "../protocol.ts";
-import type {
-	FinishStrategy,
-	PolicyExplanation,
-	ProjectConfig,
-	TreesConfig,
-} from "../domain/config.ts";
+import type { FinishStrategy, PolicyExplanation, TreesConfig } from "../domain/config.ts";
 import {
 	assertCleanSource,
 	assertFinishTargetReady,
@@ -64,8 +59,6 @@ interface FinishSourceInfo {
 	config: TreesConfig;
 	/** Resolved policy for the canonical root. */
 	explanation: PolicyExplanation;
-	/** Project matching the canonical root, when configured. */
-	project: ProjectConfig | undefined;
 	/** Source worktree selected by cwd. */
 	source: Worktree;
 	/** Checked-out source branch. */
@@ -169,7 +162,7 @@ async function resolveFinishSource(
 		worktrees,
 	});
 	const explanation = deps.config.explain(config, canonical.path);
-	return { canonical, config, explanation, project: explanation.project, source, sourceBranch };
+	return { canonical, config, explanation, source, sourceBranch };
 }
 
 function resolveFinishPolicy(explanation: PolicyExplanation): FinishPolicyPlan {
@@ -260,9 +253,7 @@ async function executeFinish(
 	const afterOutput = await pushAndCleanup({
 		cleanupActions: state.cleanupActions,
 		deps,
-		explanation: source.explanation,
 		plan: target.plan,
-		project: source.project,
 		request,
 		root: source.canonical.path,
 		source: source.source,

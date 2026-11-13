@@ -1,14 +1,6 @@
-import { BlockedError, EXIT_CODES, dispatch } from "../../src/index";
+import { EXIT_CODES, dispatch } from "../../src/index";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import {
-	deps,
-	initRepo,
-	restoreTestEnv,
-	run,
-	setTestEnv,
-	useOriginFixture,
-	writeConfig,
-} from "./support.ts";
+import { deps, initRepo, restoreTestEnv, setTestEnv, writeConfig } from "./support.ts";
 // Integration fixtures exercise real filesystem and process boundaries.
 // oxlint-disable-next-line import/no-nodejs-modules
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -18,8 +10,6 @@ import { join } from "node:path";
 // Integration fixtures exercise real filesystem and process boundaries.
 // oxlint-disable-next-line import/no-nodejs-modules
 import { tmpdir } from "node:os";
-
-const { initRepoWithOrigin } = useOriginFixture();
 
 let tmp = "";
 
@@ -72,7 +62,7 @@ async function assertCanonicalList(root: string) {
 	expect(canonical.branchRef).toBeUndefined();
 }
 
-test("root, list, json list, and non-pool path against a real repo #test-292", async () => {
+test("root, list, json list, and feature path against a real repo #test-292", async () => {
 	const root = await initQueryRepo();
 	writeConfig({ command: "echo ready", root, tmp });
 
@@ -135,7 +125,7 @@ test("config explain reports effective policy JSON #test-293", async () => {
 			copy: [],
 			copy_mode_default: "copy",
 			name: "repo",
-			// oxlint-disable-next-line unicorn/no-null -- No configured pool has an explicit null size.
+			// oxlint-disable-next-line unicorn/no-null -- Retained config JSON field; pool configuration was removed.
 			pool_size: null,
 		},
 		setup_output: [],
@@ -148,24 +138,4 @@ test("list remains available with malformed config #test-294", async () => {
 	await writeRawConfig(join(tmp, "config"), "[[project]]\nroot = ");
 
 	await assertCanonicalList(root);
-});
-
-async function initLockedPool() {
-	const configRoot = join(tmp, "repo");
-	const { root } = await initRepoWithOrigin(tmp);
-	await run(["git", "-C", root, "worktree", "add", "-b", "wk-pool/feat1", `${root}__feat1`]);
-	await run(["git", "-C", root, "worktree", "lock", "--reason", "keep slot", `${root}__feat1`]);
-	const configHome = join(tmp, "config");
-	await writeRawConfig(
-		configHome,
-		`[[project]]\nroot = "${configRoot}"\ncommand = "echo ready"\npool_size = 1\n`,
-	);
-	return root;
-}
-
-test("pooled path refuses an unallocated branch #test-290", async () => {
-	const root = await initLockedPool();
-
-	const { failure } = await dispatch("path", ["--cwd", root, "--branch", "feature/cool"], deps);
-	expect(failure).toBeInstanceOf(BlockedError);
 });

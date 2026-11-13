@@ -52,7 +52,6 @@ test("finish accepts a trimmed squash message and an ff_only plan without a mess
 
 function unusedDependencies(unexpected: () => never): Deps {
 	return {
-		skills: { getSkills: unexpected, getSkillFile: unexpected },
 		git: { run: unexpected, runRaw: unexpected },
 		worktrees: { list: unexpected },
 		config: { read: unexpected, explain: unexpected },
@@ -64,7 +63,7 @@ function unusedDependencies(unexpected: () => never): Deps {
 			writePostCreateScript: unexpected,
 		},
 		hooks: { runInline: unexpected, runCommand: unexpected },
-		picker: { pick: unexpected, confirm: unexpected },
+		picker: { pick: unexpected },
 		multiplexer: {
 			attached: false,
 			open: unexpected,
@@ -73,6 +72,5 @@ function unusedDependencies(unexpected: () => never): Deps {
 		},
 		cdDirective: { write: unexpected },
 		progress: { banner: unexpected, stream: unexpected, error: unexpected },
-		clock: { now: unexpected },
 	};
 }

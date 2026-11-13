@@ -2,25 +2,22 @@
 import {
 	CanonicalRootError,
 	DuplicateBranchError,
-	EXIT_CODES,
-	ReservedPrefixError,
 	UsageError,
 	withFailureContext,
 } from "../errors.ts";
-import type { CommandResult, OutputMode, PoolFullPayload, ReadyAddPayload } from "../protocol.ts";
+import type { CommandResult, OutputMode, ReadyAddPayload } from "../protocol.ts";
 import type { PolicyExplanation, TreesConfig } from "../domain/config.ts";
 import {
-	addNonPoolWorktree,
+	addWorktree,
 	captureExistingBranchHead,
 	mergeOriginIfPresent,
 	prepareAddBranch,
-	rollbackNonPoolAdd,
+	rollbackAdd,
 	withoutLazyFetch,
 } from "./add-worktree.ts";
 import { encodeBranch, worktreePathForName } from "../domain/worktree.ts";
 import {
 	finalizeReadyResult,
-	finalizeStructuredResult,
 	parseOptions,
 	parseOutputMode,
 	requireOption,
@@ -30,7 +27,6 @@ import { resolveCanonicalRoot, resolveWorktreeContainingPath } from "../applicat
 import { runBootstrap, runPreRemoteCheck } from "../application/hooks.ts";
 import type { Deps } from "../services.ts";
 import type { Worktree } from "../domain/worktree.ts";
-import { addPooledWorktree } from "./add-pool.ts";
 import { focusWorktree } from "../application/interactive.ts";
 import { listWorktrees } from "../git/worktrees.ts";
 import { projectNameFor } from "../domain/config.ts";
@@ -44,8 +40,6 @@ interface AddRequest {
 	branch: string;
 	/** Caller checkout. */
 	cwd: string;
-	/** Permit forced pool recycling. */
-	force: boolean;
 	/** Permit shell/session focus. */
 	interactive: boolean;
 	/** Suppress Wktree-controlled network IO while retaining cached-ref policy. */
@@ -54,8 +48,6 @@ interface AddRequest {
 	skipCommand: boolean;
 	/** Output rendering mode. */
 	output: OutputMode;
-	/** Explicit pool slot override. */
-	slotPath: string | null;
 }
 interface AddContext {
 	/** Resolved starting ref. */
@@ -81,14 +73,10 @@ export async function addCommand(args: string[], deps: Deps): Promise<CommandRes
 			operationDeps = { ...deps, git: withoutLazyFetch(deps.git) };
 		}
 		const context = await prepareAdd(request, operationDeps);
-		if (context.explanation.project?.poolSize) {
-			return addFromPool(context, context.explanation.project);
-		}
-		return await addStandalone(context);
+		return await addCheckout(context);
 	} catch (error) {
 		throw withFailureContext(error, {
 			branch: request.branch,
-			slot_path: request.slotPath ?? undefined,
 		});
 	}
 }
@@ -98,7 +86,7 @@ function optionalRef(value: string | boolean | undefined): string | null {
 	if (typeof value === "string") {
 		return value;
 	}
-	// eslint-disable-next-line unicorn/no-null -- Branch/pool application APIs model an absent override with null.
+	// eslint-disable-next-line unicorn/no-null -- Branch application APIs model an absent override with null.
 	return null;
 }
 
@@ -111,18 +99,13 @@ function parseAddRequest(args: string[]): AddRequest {
 		baseCurrent: opts["base-current"] === true,
 		branch,
 		cwd,
-		force: opts.force === true,
 		interactive: opts.interactive === true,
 		noNetwork: opts["no-network"] === true,
 		skipCommand: opts["skip-command"] === true,
 		output: parseOutputMode(opts),
-		slotPath: optionalRef(opts.slot),
 	};
 	if (request.baseCurrent && request.base !== null) {
 		throw new UsageError("--base-current cannot be combined with --base");
-	}
-	if (branch.startsWith("wk-pool/")) {
-		throw new ReservedPrefixError("branch names starting with wk-pool/ are reserved");
 	}
 	return request;
 }
@@ -143,7 +126,7 @@ function resolveRequestedBase(
 }
 
 async function inspectAddTarget(context: AddContext): Promise<string | null> {
-	const { deps, explanation, request, root } = context;
+	const { deps, request, root } = context;
 	const worktrees = await listWorktrees(deps.git, root);
 	const existing = worktrees.find((worktree) => worktree.branch === request.branch);
 	if (existing) {
@@ -151,11 +134,7 @@ async function inspectAddTarget(context: AddContext): Promise<string | null> {
 			`branch ${request.branch} is already checked out at ${existing.path}`,
 		);
 	}
-	const base = resolveRequestedBase(request, worktrees, deps);
-	if (request.slotPath && !explanation.project?.poolSize) {
-		throw new UsageError("--slot is only valid for pooled projects");
-	}
-	return base;
+	return resolveRequestedBase(request, worktrees, deps);
 }
 
 async function prepareAdd(request: AddRequest, deps: Deps): Promise<AddContext> {
@@ -231,7 +210,6 @@ async function populateCheckout(checkout: Checkout): Promise<void> {
 		await runBootstrap(deps, {
 			command: explanation.command.command,
 			created: worktreePath,
-			pooled: false,
 			projectName: projectNameFor(explanation.project, root),
 			root,
 		});
@@ -247,7 +225,7 @@ async function createCheckout(checkout: Checkout): Promise<void> {
 		location: explanation.worktreeLocation,
 		git: deps.git,
 	});
-	await addNonPoolWorktree({
+	await addWorktree({
 		base,
 		branch: request.branch,
 		git: deps.git,
@@ -259,7 +237,7 @@ async function createCheckout(checkout: Checkout): Promise<void> {
 	try {
 		await populateCheckout(checkout);
 	} catch (error) {
-		await rollbackNonPoolAdd({
+		await rollbackAdd({
 			branch: request.branch,
 			branchState,
 			git: deps.git,
@@ -271,13 +249,7 @@ async function createCheckout(checkout: Checkout): Promise<void> {
 	}
 }
 
-function finalizeAdd(
-	context: AddContext,
-	payload: ReadyAddPayload | PoolFullPayload,
-): CommandResult {
-	if (payload.kind === "pool_full") {
-		return finalizeStructuredResult(payload, context.request.output, EXIT_CODES.BLOCKED);
-	}
+function finalizeAdd(context: AddContext, payload: ReadyAddPayload): CommandResult {
 	let afterOutput: (() => Promise<void>) | undefined = undefined;
 	if (context.request.interactive) {
 		afterOutput = () =>
@@ -291,7 +263,7 @@ function finalizeAdd(
 	});
 }
 
-async function addStandalone(context: AddContext): Promise<CommandResult> {
+async function addCheckout(context: AddContext): Promise<CommandResult> {
 	const checkout = await prepareCheckout(context);
 	await createCheckout(checkout);
 	const { branchState, originalBranchHead, request, root, worktreePath } = checkout;
@@ -302,30 +274,6 @@ async function addStandalone(context: AddContext): Promise<CommandResult> {
 		root,
 		title: request.branch,
 		worktreePath,
-	});
-	return finalizeAdd(context, payload);
-}
-
-async function addFromPool(
-	context: AddContext,
-	project: NonNullable<PolicyExplanation["project"]>,
-): Promise<CommandResult> {
-	const { base, config, deps, explanation, request, root } = context;
-	const payload = await addPooledWorktree({
-		base,
-		branch: request.branch,
-		command: explanation.command.command,
-		config,
-		deps,
-		force: request.force,
-		interactive: request.interactive,
-		json: request.output.json,
-		noNetwork: request.noNetwork,
-		skipCommand: request.skipCommand,
-		project,
-		root,
-		slotPath: request.slotPath,
-		worktreeLocation: explanation.worktreeLocation,
 	});
 	return finalizeAdd(context, payload);
 }

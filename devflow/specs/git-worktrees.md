@@ -2,13 +2,13 @@
 
 **Status:** Implemented
 
-**Last Updated:** 2026-10-12
+**Last Updated:** 2026-11-13
 
 ## 1. Overview
 
 ### Purpose
 
-`wktree` is a deterministic local engine for creating, reusing, inspecting, and removing git worktrees. It gives the same lifecycle contract to humans, shell wrappers, terminal multiplexers, and agents. Durable state lives in git metadata, filesystem paths, project config, and optional per-repository pool slots; terminal multiplexers are an integration, not a database.
+`wktree` is a deterministic local engine for creating, preparing, inspecting, integrating, and removing git worktrees. It gives the same lifecycle contract to humans, shell wrappers, terminal multiplexers, and agents. Durable state lives in git metadata, filesystem paths, and project config; terminal multiplexers are an integration, not a database.
 
 ### Goals
 
@@ -16,7 +16,6 @@
 - Use deterministic branch, path, and session identity.
 - Serve human interactive and non-interactive machine workflows with the same semantics.
 - Reconstruct current state from authoritative sources rather than a synchronized cache.
-- Support opt-in fixed pools for high-cost repositories.
 - Support deterministic per-worktree copy setup for untracked local configuration and tool assets.
 - Allow explicit repository policy for how new work starts and how completed work is integrated.
 - Surface destructive or ambiguous states with structured data.
@@ -26,7 +25,6 @@
 - No durable worktree/session database beyond git/filesystem/config state.
 - No multiplexer session resurrection or persistent session registry.
 - No requirement that each worktree has a live multiplexer session.
-- No implicit pool expansion.
 - No periodic repository sync daemon, background auto-pull, or auto-push loop.
 - No automatic commits for normal source repositories.
 - No automatic merge-conflict resolution or force-pushing.
@@ -35,7 +33,7 @@
 
 ## 2. Design Decisions
 
-- **Decision:** `wktree` owns all git/worktree state transitions (creation, removal, pool allocation, recycling, safety checks, bootstrap).
+- **Decision:** `wktree` owns all git/worktree state transitions (creation, integration, removal, safety checks, bootstrap).
   - **Rationale:** Centralizing avoids duplicated, drift-prone shell behavior across the multiple consumers (humans, wrappers, tmux, agents) that all need identical semantics.
 - **Decision:** Terminal multiplexers are an injected integration service, not the source of truth. The engine opens, focuses and closes sessions through a small interface (tmux is the first implementation) but stores no session state; correctness derives from git and filesystem state.
   - **Rationale:** Keeping session handling in the engine removes duplicated wrapper logic, and the interface keeps another multiplexer with a similar API swappable. A persistent session registry would be a second database to keep in sync; reconstructable identity removes that failure mode.
@@ -47,12 +45,8 @@
   - **Rationale:** Sibling paths remain easy to discover, while `<canonicalRoot>/.worktrees/` avoids clutter around repositories with many worktrees. Treating Git's worktree registry as authoritative keeps existing `.wktree` and manually located worktrees usable when the preference changes.
 - **Decision:** New branches default to origin's default branch/trunk unless a base is given.
   - **Rationale:** Commands are often run from inside another worktree; defaulting to the current HEAD would silently create accidental stacked branches.
-- **Decision:** Pools are explicit per-project optimizations, never expanded implicitly.
-  - **Rationale:** Pools trade branch-named paths for bounded reusable environments; silent growth would defeat the bound and surprise high-cost-repo owners.
-- **Decision:** Only `add` and explicit `ensure` initialize pools. `list` reads Git's worktree inventory without loading config, inspecting checkout contents, or running hooks.
-  - **Rationale:** Ready-to-work guarantees belong to allocation, not discovery or cleanup. Listing must remain cheap and available when setup or remote access is broken; removing a checkout must not prepare unrelated slots.
-- **Decision:** Pool exhaustion is a recoverable, structured `pool_full` outcome.
-  - **Rationale:** Machine consumers can branch on it programmatically and humans can pick a slot interactively, instead of hitting an opaque hard failure.
+- **Decision:** Queries do not prepare worktrees. `list` reads Git's registered inventory without loading config, inspecting checkout contents, or running hooks; `path` resolves an actual or expected path without creating it.
+  - **Rationale:** Setup belongs to `add` and explicit `copy`, not discovery or cleanup. Inspection must remain available when setup is broken.
 - **Decision:** Bootstrap is part of ready-to-work semantics, runs inside the engine, and failures are loud.
   - **Rationale:** A worktree that looks created but isn't prepared is a worse trap than an explicit failure. Running bootstrap in the engine keeps its rollback in one process, so every consumer gets the same result and no caller has to compensate for a failed setup.
 - **Decision:** Copy setup runs before configured commands and is rerunnable with `wktree copy`.
@@ -76,21 +70,16 @@
 
 Branch, path, and session identity are deterministic and reconstructable from git and filesystem state alone.
 
-- With `worktree_location = "sibling"` (the default):
-  - non-pooled path: `<canonicalRoot>__<branch with / encoded as -->`;
-  - pooled path: `<canonicalRoot>__featN`.
-- With `worktree_location = "nested"`:
-  - non-pooled path: `<canonicalRoot>/.worktrees/<branch with / encoded as -->`;
-  - pooled path: `<canonicalRoot>/.worktrees/featN`.
-- Pooled placeholder branch: `wk-pool/featN`.
+- With `worktree_location = "sibling"` (the default): `<canonicalRoot>__<branch with / encoded as -->`.
+- With `worktree_location = "nested"`: `<canonicalRoot>/.worktrees/<branch with / encoded as -->`.
 
-The effective location controls only newly created worktrees and missing pool slots. Existing worktrees retain the paths reported by `git worktree list`, whether sibling, nested, or manually chosen. `path` returns a registered branch's actual path before deriving a new path from config.
+The effective location controls only newly created worktrees. Existing worktrees retain the paths reported by `git worktree list`, whether sibling, nested, or manually chosen. `path` returns a registered branch's actual path before deriving a new path from config.
 
 For nested layouts, `wktree` records `/.worktrees/` and the previous `/.wktree/` path in a dedicated fenced block in the repository's shared exclude file before creating a worktree. The canonical checkout therefore remains clean.
 
 ### Canonical root
 
-The canonical/root worktree is protected: it MUST NOT be removed or recycled, and it anchors config lookup, sibling path generation, default-branch detection, and safety checks.
+The canonical/root worktree is protected: it MUST NOT be removed, and it anchors config lookup, sibling path generation, default-branch detection, and safety checks.
 
 ### Session identity
 
@@ -108,39 +97,24 @@ Missing multiplexer sessions are normal and reconstructable, never an error.
 
 ### Safety invariants
 
-- Unforced operations refuse dirty, ahead, local-only, or otherwise ambiguous states. `remove --keep-branch` is the exception for branch merge/upstream state: it requires a clean worktree or slot but removes/recycles it without checking whether the retained branch is merged.
-- `remove --integrated-into <origin/ref>` is a conservative squash-aware cleanup path. It fetches `origin`, requires a clean source worktree or slot, verifies the claimed remote-tracking target resolves to a distinct commit with a shared branch point, then requires every source-changed path to be content-equivalent at that target. Git cannot establish forge/PR provenance for a squash commit, so this proves the branch's content is present at the user-named target rather than its causal history. It may use force branch deletion only after that proof, because Git's ordinary merged-branch test cannot recognize squash merges. It cannot be combined with `--force` or `--keep-branch`.
-- Forced operations may be destructive but MUST preserve gitignored files such as dependency directories when recycling.
-
-### Pool semantics
-
-A project with `pool_size` uses fixed reusable slots. Pooled mode changes command-visible behavior across `path`, `add`, `remove`, `list`, `ensure`, and `status`, and introduces the `pool_full` outcome.
-
-- Existing slots are discovered from registered worktrees in either sibling or nested form; only missing slots use the effective location preference. Placeholder branch `wk-pool/featN`; initialized marker `wk-pool-initialized` in git metadata.
-- If both sibling and nested registered worktrees claim the same `featN` slot, pool operations block rather than choosing one silently.
-- `add` prepares only the selected slot. It checks out the requested branch before running copy/setup once, and reports `ready` only after setup succeeds or the caller explicitly selects `--skip-command`. Unrelated missing, half-initialized, occupied, dirty or broken slots are never initialized or repaired by `add`. Explicit `ensure` prepares the entire pool for pre-warming or repair. Selected-slot setup failures are loud; they do not return `pool_full`.
-- `list` reports registered worktrees from one Git inventory read, including existing pool slots regardless of initialization state. It does not load config, inspect dirty state or commit history, run hooks, contact remotes, or create missing slots. Canonical and pool annotations come from Git's inventory.
-- `status` reports missing or half-initialized slots without repairing them; `path` resolves paths without initialization.
-- Pooled `remove` recycles only an existing target and never initializes slots. Missing targets are refused. A half-initialized target remains uninitialized after recycling; the normal dirty-state and branch-safety checks still apply.
-- Allocation prefers the lowest clean initialized placeholder slot, otherwise the lowest missing slot or clean uninitialized placeholder. A slot whose Git status cannot be read is reported as dirty and cannot be automatically selected. `--slot <path>` may select any configured slot, including a missing slot; occupied slots still pass normal safe recycling or explicit `--force` before allocation. Dirty placeholders require explicit forced recycling regardless of initialization state.
-- Safe recycling refuses dirty slots, branches without upstreams, and branches not merged to upstream when deleting the old branch. `remove --keep-branch` only requires a clean slot, then resets it to its placeholder while preserving the old branch. `remove --integrated-into <origin/ref>` applies its squash-aware proof before resetting the clean slot and deleting its old branch. Forced recycling may discard tracked/untracked work and delete the old branch.
-- Exhaustion returns `pool_full` with recyclable candidates (see §4).
+- Unforced operations refuse dirty, ahead, local-only, or otherwise ambiguous states. `remove --keep-branch` is the exception for branch merge/upstream state: it requires a clean worktree but removes it without checking whether the retained branch is merged.
+- `remove --integrated-into <origin/ref>` is a conservative squash-aware cleanup path. It fetches `origin`, requires a clean source worktree, verifies the claimed remote-tracking target resolves to a distinct commit with a shared branch point, then requires every source-changed path to be content-equivalent at that target. Git cannot establish forge/PR provenance for a squash commit, so this proves the branch's content is present at the user-named target rather than its causal history. It may use force branch deletion only after that proof, because Git's ordinary merged-branch test cannot recognize squash merges. It cannot be combined with `--force` or `--keep-branch`.
+- Forced removal may discard uncommitted work and delete an unmerged branch, but MUST NOT remove the canonical root.
 
 ### Bootstrap
 
-Project config defines required `command`s that prepare a worktree or slot for work, plus optional copy setup that materializes local files or directories into the created worktree. Copy setup runs before the configured command. The command runs under bash with `WK_ROOT` (canonical root) and `WK_CREATED` (the created worktree or allocated slot) exported.
+Project config may define a bootstrap `command` that prepares a worktree for work, plus copy setup that materializes local files or directories into the created worktree. Copy setup runs before the configured command. The command runs under bash with `WK_ROOT` (canonical root) and `WK_CREATED` (the created worktree) exported.
 
-- Add/allocation runs the command inside `wktree` before reporting `ready`, unless `--skip-command` is selected. On failure the engine rolls back the add: a newly created worktree (including a selected missing pool slot) is removed, a newly created branch is deleted, a pre-existing branch is restored to its previous head, and an allocated existing pool slot returns to its placeholder. An existing uninitialized slot remains uninitialized after failure. The command fails as a hook failure (exit `1`); without `--json`, its output streams to the terminal as it runs.
+- `add` runs the command inside `wktree` before reporting `ready`, unless `--skip-command` is selected. On failure the engine rolls back the add: a newly created worktree is removed, a newly created branch is deleted, and a pre-existing branch is restored to its previous head. The command fails as a hook failure (exit `1`); without `--json`, its output streams to the terminal as it runs.
 - With `--json`, bootstrap output is captured in the payload's `setup_output`; a failure reports `reason: "setup_failed"` with `setup_exit_code`.
-- `add --skip-command` retains copy/symlink setup and all safety checks, and skips only bootstrap. Cold slots may be allocated but get no new `wk-pool-initialized` marker. Preserve any existing marker as historical successful initialization; occupied unmarked slots remain occupied and eligible recycling candidates. Emit explicit skip diagnostics without changing structured `kind` values.
-- Pool initialization runs setup inside `wktree` so initialized slots are actually ready; newly-created pooled slots roll back on setup failure, while existing half-initialized slots remain uninitialized until a later successful run.
+- `add --skip-command` retains copy/symlink setup and all safety checks, and skips only bootstrap. Emit explicit skip diagnostics without changing structured `kind` values.
 
 ### Interactive mode
 
 `--interactive` is a global flag for human wrappers. It lets the engine move the user's focus to follow the command:
 
 - `add` opens the worktree's multiplexer session and focuses it. Outside a multiplexer it writes the worktree path to the cd directive instead.
-- `remove`, and `finish` when its cleanup removes or recycles the worktree, write the canonical root to the cd directive if the caller's working directory was inside that worktree, then close multiplexer sessions rooted at or below its path. Closing sessions is the last step, after all output, because closing the invoking session may end the `wktree` process.
+- `remove`, and `finish` when its cleanup removes the worktree, write the canonical root to the cd directive if the caller's working directory was inside that worktree, then close multiplexer sessions rooted at or below its path. Closing sessions is the last step, after all output, because closing the invoking session may end the `wktree` process.
 - `pick` writes the selected worktree path to the cd directive; `pick --open` instead opens and focuses its multiplexer session, and requires one.
 - Multiplexer failures are warnings on stderr, written after any JSON document. They never undo a completed git operation.
 
@@ -165,8 +139,8 @@ Every configured destination is also written once to the canonical repository's 
 ```gitignore
 # wktree-start
 .env
-.claude/skills/skill-dir
-.pi/agents/skill-dir
+.tooling
+.editor/tooling
 # wktree-end
 ```
 
@@ -181,7 +155,7 @@ Policy and inherited bootstrap command configuration describes default behavior 
 3. an exact global `[[project]]` entry for the canonical root, whose fields win over rules;
 4. `.wktree.toml` at the canonical root, whose explicit fields override the resolved global settings.
 
-Rules match canonical root paths with an explicit `root_glob`. Glob matching is only for root selection; copy paths keep their stricter no-glob contract. Rules may provide an optional bootstrap `command` and optional `pre_remote_check`; matching rule values are evaluated in file order with later values winning. Pools and copy setup may be configured by an exact global project or the repository-local file. Exact projects may also exist only to override policy or command defaults for an exceptional repository. Local options inherit when omitted; finish patches merge field-by-field and copy arrays replace the inherited list, including an explicit empty list. All worktrees use the canonical file rather than a caller-worktree file.
+Rules match canonical root paths with an explicit `root_glob`. Glob matching is only for root selection; copy paths keep their stricter no-glob contract. Rules may provide an optional bootstrap `command` and optional `pre_remote_check`; matching rule values are evaluated in file order with later values winning. Copy setup may be configured by an exact global project or the repository-local file. Exact projects may also exist only to override policy or command defaults for an exceptional repository. Local options inherit when omitted; finish patches merge field-by-field and copy arrays replace the inherited list, including an explicit empty list. All worktrees use the canonical file rather than a caller-worktree file.
 
 ### Add freshness policy
 
@@ -196,13 +170,13 @@ An explicit `--base` or `--base-current` remains a user override for stacked or 
 
 `add --no-network` requires Git 2.45+ for `--no-lazy-fetch`. Skip `pre_remote_check`, fetch and network default discovery, retaining normal add policy against cached refs. Discover the default name only from local `origin/HEAD`. `origin_default` starts new default-base branches from cached `origin/<default>` without canonical mutation. `fresh_canonical` retains clean/on-default/ancestor checks and the FF-only canonical merge before branching; a locally ahead or diverged canonical still blocks. Existing branches retain the normal cached-origin FF-only attempt, with warning and local-work preservation on failure.
 
-If the cached default ref is absent, use the known local default committed tip; `fresh_canonical` retains clean/on-default checks without a remote ancestry/merge target. Unknown default metadata or absent cached and local defaults requires actionable `--base` guidance, never guessed `HEAD`. Explicit `--base`/`--base-current` retain their policy override and resolve locally. Present refs with missing required objects fail loudly, without fallback or lazy fetching, including reads, checkouts, copy checks and pool previews. Ordinary fetch failure does not automatically select offline behavior.
+If the cached default ref is absent, use the known local default committed tip; `fresh_canonical` retains clean/on-default checks without a remote ancestry/merge target. Unknown default metadata or absent cached and local defaults requires actionable `--base` guidance, never guessed `HEAD`. Explicit `--base`/`--base-current` retain their policy override and resolve locally. Present refs with missing required objects fail loudly, without fallback or lazy fetching, including reads, checkouts and copy checks. Ordinary fetch failure does not automatically select offline behavior.
 
-Pooled offline add resolves one reset commit before slot mutation: cached origin default first, then known local default, then a supplied explicit base/base-current if neither default is available, otherwise an actionable failure. Carry it through recycling and rollback without rediscovering default/remote state. A successful canonical fast-forward remains after later setup failure, matching ordinary add. Slot inventory is independent of trunk discovery. Other commands retain their policies. `--no-network` and `--skip-command` are independent; configured commands and user Git hooks remain capable of network IO and may require skipped bootstrap or user intervention.
+A successful canonical fast-forward remains after later setup failure, matching ordinary add. Other commands retain their policies. `--no-network` and `--skip-command` are independent; configured commands and user Git hooks remain capable of network IO and may require skipped bootstrap or user intervention.
 
 ### Remote pre-check
 
-Repositories may resolve an optional `pre_remote_check` Bash snippet from matching rules, an exact project entry and repository-local settings. `wktree` runs the resolved snippet from the canonical root before any remote-aware operation: fetch/push, origin default-branch detection, or freshness checks against `origin/*` refs in add, pooled ensure/path/status/remove flows, and finish. `list` is local inventory only and never runs this pre-check.
+Repositories may resolve an optional `pre_remote_check` Bash snippet from matching rules, an exact project entry and repository-local settings. `wktree` runs the resolved snippet from the canonical root before any remote-aware operation: fetch/push, origin default-branch detection, or freshness checks against `origin/*` refs in `add`, remote-proof `remove`, and `finish`. Inventory and path queries never run this pre-check.
 
 - exit `0`: stay silent and continue;
 - non-zero exit: abort immediately, do not perform later remote checks/contact, and surface the script's stderr to the user.
@@ -246,13 +220,11 @@ This protects canonical from integration conflicts; it does not roll back arbitr
 | Command | Purpose |
 | --- | --- |
 | `wktree [--cwd <path>] root` | Print canonical worktree root. |
-| `wktree [--cwd <path>] list [--json]` | List registered worktrees without initializing pools or inspecting checkout contents. |
-| `wktree [--cwd <path>] tree [--json]` | Group registered worktrees relative to the repository default branch, infer feature stacks, and list free slots flat. |
+| `wktree [--cwd <path>] list [--json]` | List registered worktrees without setup or inspecting checkout contents. |
+| `wktree [--cwd <path>] tree [--json]` | Group registered worktrees relative to the repository default branch, infer feature stacks from local ancestry. |
 | `wktree [--cwd <path>] path --branch <branch>` | Print the worktree path for a branch. |
-| `wktree [--cwd <path>] add --branch <branch> [--json] [--slot <path>] [--base <ref>] [--base-current] [--no-network] [--skip-command] [--force]` | Create or allocate a worktree. |
-| `wktree [--cwd <path>] remove (--branch <branch> \| --self) [--json] [--force] [--keep-branch] [--integrated-into <origin/ref>]` | Remove a regular worktree or free a pooled worktree slot. `--self` targets the worktree containing `cwd`. `--integrated-into` proves clean squash-aware cleanup against a fetched target. |
-| `wktree [--cwd <path>] ensure` | Materialize configured pool slots. |
-| `wktree [--cwd <path>] status` | Print pool status JSON. |
+| `wktree [--cwd <path>] add --branch <branch> [--json] [--base <ref>] [--base-current] [--no-network] [--skip-command]` | Create and prepare a branch worktree at its deterministic path. |
+| `wktree [--cwd <path>] remove (--branch <branch> \| --self) [--json] [--force] [--keep-branch] [--integrated-into <origin/ref>]` | Remove a branch worktree without integrating its changes. `--self` targets the worktree containing `cwd`. `--integrated-into` proves clean squash-aware cleanup against a fetched target. |
 | `wktree [--cwd <path>] copy [--json]` | Re-run configured copy setup for the non-canonical worktree containing `cwd`. |
 | `wktree [--cwd <path>] config explain [--json]` | Show effective policy/setup and provenance after global layers and canonical-root local overrides. |
 | `wktree [--cwd <path>] finish [--title <subject>] [--body <text>] [--json]` | Integrate a completed worktree into the canonical root using effective finish policy. `--title` is required with the `squash` strategy; other strategies reject both message options. |
@@ -264,17 +236,17 @@ This protects canonical from integration conflicts; it does not roll back arbitr
 
 `add --base-current` uses the branch checked out in the worktree containing `--cwd` as its base. A detached worktree and combining it with `--base` are usage errors.
 
-`--interactive` is a global option for human wrappers; see §3 Interactive mode.
+`--interactive` is a global option for human wrappers; see §3 Interactive mode. Scripts and agents omit it and use structured output where available. `add`, `remove`, and `finish` own lifecycle transitions; `root`, `list`, `path`, and `tree` are queries; `copy` reapplies untracked setup files without bootstrap.
 
 ### Structured output rules
 
 The CLI uses the following output contract.
 
-- `--json` writes exactly one JSON object to stdout, on success and on every failure, and nothing to stderr. `status` always behaves as `--json`.
+- `--json` writes exactly one JSON object to stdout, on success and on every failure, and nothing to stderr.
 - Every document carries `ok` (`true` exactly when the exit code is `0`), a `kind`, and the captured output of the run: `diagnostics` (wktree's progress lines and warnings) and `setup_output` (bootstrap lines as `{ stream, line }`).
 - Without `--json`, stdout carries results and stderr carries diagnostics, progress, warnings, and human-readable errors.
 - Consumers branch on `ok`, `kind`, and `reason`, never on message text.
-- Payload changes are additive: existing `kind` values and fields are kept.
+- Payload changes for surviving commands are additive: existing `kind` values and fields are kept.
 
 ### Exit codes
 
@@ -312,7 +284,7 @@ Successful add-like payload:
 
 Later examples omit `ok`, `diagnostics`, and `setup_output`.
 
-Successful remove-like payload. Non-pooled removal reports `removed: true`; pooled removal recycles the slot in place and reports `kind: "ready"` with `removed: false`:
+Successful removal reports `kind: "ready"` and `removed: true`:
 
 ```json
 {
@@ -323,20 +295,20 @@ Successful remove-like payload. Non-pooled removal reports `removed: true`; pool
 }
 ```
 
-Failures emit `ok: false` with a `kind`, an enumerated machine `reason`, and a human-readable `message`. Optional `branch`, `worktree_path`, and `slot_path` are included when known.
+Failures emit `ok: false` with a `kind`, an enumerated machine `reason`, and a human-readable `message`. Optional `branch` and `worktree_path` are included when known.
 
-Blocked/recoverable refusals use `kind: "blocked"` with a `reason` such as `duplicate_branch`, `dirty_slot`, `unmerged_branch`, `canonical_root`, `unsafe`, `dirty_canonical`, `wrong_canonical_branch`, `non_ff_canonical`, `dirty_worktree`, `target_not_fresh`, `push_rejected`, `conflict`, `pre_remote_check_failed`, or `blocked`:
+Blocked/recoverable refusals use `kind: "blocked"` with a `reason` such as `duplicate_branch`, `unmerged_branch`, `canonical_root`, `unsafe`, `dirty_canonical`, `wrong_canonical_branch`, `non_ff_canonical`, `dirty_worktree`, `target_not_fresh`, `push_rejected`, `conflict`, `pre_remote_check_failed`, or `blocked`:
 
 ```json
 {
 	"kind": "blocked",
-	"reason": "dirty_slot",
-	"message": "slot has uncommitted changes",
-	"slot_path": "/repo__feat1"
+	"reason": "dirty_worktree",
+	"message": "worktree has uncommitted changes",
+	"worktree_path": "/repo__feature--foo"
 }
 ```
 
-Failures to run use `kind: "error"` with a `reason` such as `usage`, `config`, `reserved_prefix`, `trunk_detection_failed`, `setup_failed`, `git_failed`, `cancelled`, or `internal`. Setup failures add `setup_exit_code`. Failed `finish` runs report partial progress as `integrated` and the `cleanup_actions` that completed:
+Failures to run use `kind: "error"` with a `reason` such as `usage`, `config`, `trunk_detection_failed`, `setup_failed`, `git_failed`, `cancelled`, or `internal`. Setup failures add `setup_exit_code`. Failed `finish` runs report partial progress as `integrated` and the `cleanup_actions` that completed:
 
 ```json
 {
@@ -352,17 +324,13 @@ Failures to run use `kind: "error"` with a `reason` such as `usage`, `config`, `
 }
 ```
 
-`pool_full` payloads include recyclable candidate slots with risk metadata (see the slot shape below): index, path, branch, dirty state, last-commit ISO timestamp and subject, placeholder/initialized flags.
+`list --json` emits `{ "kind": "list", "worktrees": [...] }`, each worktree item carrying: `path`, `head`, `branch`, `branch_ref`, `detached`, `bare`, `locked`, `lock_reason`, `prunable`, `prunable_reason`, `canonical`, `pool`, and `session` (`{ name, path }`). `pool` is always `null`, retained only for JSON contract stability.
 
-`list --json` emits `{ "kind": "list", "worktrees": [...] }`, each worktree item carrying: `path`, `head`, `branch`, `branch_ref`, `detached`, `bare`, `locked`, `lock_reason`, `prunable`, `prunable_reason`, `canonical`, `pool`, and `session` (`{ name, path }`).
+`tree --json` retains `{ "kind": "tree", "basis": "git_ancestry", "nodes": [...] }` and adds `default_branch: { branch, ref, head }` plus each node's `comparison: { kind: "related" | "no_common_ancestor", ahead, behind }`. The baseline is null for an inventory without commits; a missing HEAD has null comparison. Nodes retain their OID/path IDs and all list-payload worktrees, grouping equal HEADs. `parentage` retains inferred/ambiguous/unknown variants, but only HEADs with locally observed shared ancestry and commits outside the default history are eligible feature parents. No eligible ancestor is `unknown/no_ancestor`; it does not deny baseline association.
 
-`tree --json` retains `{ "kind": "tree", "basis": "git_ancestry", "nodes": [...] }` and adds `default_branch: { branch, ref, head }` plus each node's `comparison: { kind: "related" | "no_common_ancestor", ahead, behind }`. The baseline is null for an inventory without commits; a missing HEAD has null comparison. Nodes retain their OID/path IDs and all list-payload worktrees, including free members of equal-HEAD groups. `parentage` retains inferred/ambiguous/unknown variants, but only active HEADs with locally observed shared ancestry and commits outside the default history are eligible feature parents. No eligible ancestor is `unknown/no_ancestor`; it does not deny baseline association.
-
-Text groups related, non-ambiguous feature roots and contained HEADs beneath the default header without asserting a parentage edge. Feature descendants nest under their nearest strict feature ancestor; ambiguous, no-common-ancestor and missing-HEAD groups remain separate. Free pool members are projected into a flat section with baseline counts and never become feature parents, even when their history contains other HEADs. A mixed active/free HEAD remains eligible through its active members. Equality never implies parentage; no creation history is recorded.
+Text groups related, non-ambiguous feature roots and contained HEADs beneath the default header without asserting a parentage edge. Feature descendants nest under their nearest strict feature ancestor; ambiguous, no-common-ancestor and missing-HEAD groups remain separate. Equality never implies parentage; no creation history is recorded.
 
 The default name comes only from local `origin/HEAD`, with the local default branch tip preferred over the cached origin tip; absence of both or the designation fails with `trunk_detection_failed` for committed inventories. It never guesses the default from the canonical checkout. Inventory and baseline are snapshotted before immutable-OID comparisons. All Git queries prevent lazy fetching, with no config, setup, remote access or metadata repair. Git errors fail with `git_failed` rather than becoming unknown ancestry. See the [ancestry tree guide](../../README.md#worktree-ancestry-tree) for exact presentation and JSON semantics.
-
-`status` emits pool state with `kind: "status"`. With no configured pool it is `{ root, trunk: null, hasPool: false, size: 0, slots: [] }`; otherwise `hasPool: true`, `trunk`, and `size` are populated and `slots` is an array of: `index`, `path`, `exists`, `branch`, `placeholder`, `dirty`, `lastCommitIso`, `lastCommitSubject`, `initialized`.
 
 `copy` targets the non-canonical worktree containing `--cwd` or the current directory. Targeting the canonical root is refused with exit code `11` and, when `--json` is used, a `{"kind":"blocked","reason":"canonical_root"}` payload, matching the root protection invariant. Copy config errors, invalid copy paths, and missing sources are config failures with exit code `12`; with `--json`, they emit an error payload with `reason: "config"`. Destinations that overlap tracked files are unsafe refusals with exit code `11`; with `--json`, they emit a blocked payload with `reason: "unsafe"`.
 
@@ -376,8 +344,8 @@ The default name comes only from local `origin/HEAD`, with the local default bra
 	"copied": [
 		{ "from": "/repo/.env", "to": ".env", "type": "file" },
 		{
-			"from": "/Users/me/my/repo/skill-dir",
-			"to": ".claude/skills/skill-dir",
+			"from": "/Users/me/shared/tooling",
+			"to": ".tooling",
 			"type": "directory"
 		},
 		{
@@ -386,7 +354,7 @@ The default name comes only from local `origin/HEAD`, with the local default bra
 			"type": "symlink"
 		}
 	],
-	"exclude_paths": [".env", ".claude/skills/skill-dir"]
+	"exclude_paths": [".env", ".tooling"]
 }
 ```
 
@@ -420,7 +388,7 @@ With no copy configuration, `copied` and `exclude_paths` are empty arrays.
 }
 ```
 
-With no exact global project match, `project` is `null`. With no matching root-glob rules, `matched_rules` is empty. `setup` reports effective name, pool size, copy default and copy entries. When a canonical-root local file exists, `local_config` reports its path and explicit settings; locally supplied commands and hooks have `local:<path>` sources. Local-only setup does not manufacture a global project match.
+With no exact global project match, `project` is `null`. With no matching root-glob rules, `matched_rules` is empty. `setup` reports effective name, copy default and copy entries. When a canonical-root local file exists, `local_config` reports its path and explicit settings; locally supplied commands and hooks have `local:<path>` sources. Local-only setup does not manufacture a global project match.
 
 Successful `finish --json` emits the integrated source, target, strategy, and ordered cleanup actions that actually ran:
 
@@ -436,11 +404,11 @@ Successful `finish --json` emits the integrated source, target, strategy, and or
 }
 ```
 
-Pooled cleanup reports `"recycle_worktree"` instead of `"remove_worktree"`. If push or cleanup is not enabled, the corresponding action is absent.
+If push or cleanup is not enabled, the corresponding action is absent.
 
 ### Config
 
-Global config is read only from `wktree.toml` under XDG config home (default `~/.config/wktree.toml`). Project entries define exact canonical roots for bootstrap, pools, copy setup, and exact policy overrides. Policy configuration also supports defaults and root-glob rules that can affect repositories without requiring bootstrap setup. A repository-local `.wktree.toml` at the canonical root supplies a final patch using the same applicable option shapes, with no `root`, `root_glob`, `defaults`, `rule` or `project` selectors. See the [configuration guide](../../README.md#repository-local-configuration) for local syntax, inheritance, validation and editor schemas.
+Global config is read only from `wktree.toml` under XDG config home (default `~/.config/wktree.toml`). Project entries define exact canonical roots for bootstrap, copy setup, and exact policy overrides. Policy configuration also supports defaults and root-glob rules that can affect repositories without requiring bootstrap setup. A repository-local `.wktree.toml` at the canonical root supplies a final patch using the same applicable option shapes, with no `root`, `root_glob`, `defaults`, `rule` or `project` selectors. See the [configuration guide](../../README.md#repository-local-configuration) for local syntax, inheritance, validation and editor schemas.
 
 Top-level fields:
 
@@ -453,11 +421,10 @@ Implemented exact project fields:
 | Field | Required | Purpose |
 | --- | --- | --- |
 | `root` | yes | Canonical root worktree path. |
-| `command` | when no matching rule command exists and using pools, copy, or bootstrap setup | Bootstrap command run after add/allocation and pool initialization. Policy-only exact projects may omit it; absent effective commands skip bootstrap. |
+| `command` | when no matching rule command exists and using copy or bootstrap setup | Bootstrap command run after worktree creation and copy setup. Policy-only exact projects may omit it; absent effective commands skip bootstrap. |
 | `pre_remote_check` | no | Bash snippet run before remote-aware operations for this exact root; exact project values override matching rules. |
 | `name` | no | Project identifier; defaults to the basename of `root`. |
-| `worktree_location` | no | Exact-root override for where new worktrees and missing pool slots are created. |
-| `pool_size` | no | Enables pooled mode with this many fixed slots. |
+| `worktree_location` | no | Exact-root override for where new worktrees are created. |
 | `copy_mode_default` | no | `copy` or `symlink`; defaults to `copy` and applies to all copy entries unless overridden. |
 | `copy` | no | Files or directories to copy or symlink into created worktrees before `command` runs. |
 
@@ -526,7 +493,7 @@ worktree_location = "nested"
 copy_mode_default = "copy"
 copy = [
   ".env",
-  { from = "~/my/repo/skill-dir", to = [".claude/skills/skill-dir", ".pi/agents/skill-dir"] },
+  { from = "~/shared/tooling", to = [".tooling", ".editor/tooling"] },
   { from = ".env.shared", to = ".env.shared", mode = "symlink" },
 ]
 

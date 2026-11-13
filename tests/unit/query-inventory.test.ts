@@ -6,7 +6,7 @@ import { GitError } from "../../src/git/error.ts";
 import { createMemoryWorktreeInventory } from "../contract/worktree-inventory-fixture.ts";
 
 const ABSENT_INDEX = -1;
-const SLOT_INDEX = 1;
+const LINKED_WORKTREE_INDEX = 1;
 const REGISTERED_WORKTREES = 3;
 const GIT_FAILURE = 128;
 
@@ -85,7 +85,7 @@ test("list preserves inventory order and public JSON fields without policy I/O",
 	});
 });
 
-test("JSON list reads one inventory and leaves missing pool slots absent #test-291", async () => {
+test("JSON list reads each registered worktree from one inventory #test-291", async () => {
 	const memory = createMemoryWorktreeInventory({
 		repositories: [
 			{
@@ -93,15 +93,13 @@ test("JSON list reads one inventory and leaves missing pool slots absent #test-2
 				aliases: [],
 				worktrees: [
 					worktreeFixture(root, { canonical: true }),
-					worktreeFixture(`${root}__feat1`, {
+					worktreeFixture(`${root}__ready`, {
 						branch: "feature/ready",
 						branchRef: "refs/heads/feature/ready",
-						pool: { index: 1, placeholder: false },
 					}),
-					worktreeFixture(`${root}__feat2`, {
-						branch: "wk-pool/feat2",
-						branchRef: "refs/heads/wk-pool/feat2",
-						pool: { index: 2, placeholder: true },
+					worktreeFixture(`${root}__legacy`, {
+						branch: "feature/legacy",
+						branchRef: "refs/heads/feature/legacy",
 					}),
 				],
 			},
@@ -115,23 +113,22 @@ test("JSON list reads one inventory and leaves missing pool slots absent #test-2
 	);
 	expect(result.exitCode).toBe(EXIT_CODES.SUCCESS);
 	expect(result.stderr).toBeUndefined();
-	expect(result.stdout).not.toContain(`${root}__feat3`);
 	expect(JSON.parse(result.stdout ?? "{}")).toMatchObject({
 		diagnostics: [],
 		kind: "list",
 		ok: true,
 		setup_output: [],
 		worktrees: [
-			{ canonical: true, path: root },
-			{ path: `${root}__feat1`, branch: "feature/ready", pool: { index: 1, placeholder: false } },
-			{ path: `${root}__feat2`, branch: "wk-pool/feat2", pool: { index: 2, placeholder: true } },
+			{ canonical: true, path: root, pool: null },
+			{ path: `${root}__ready`, branch: "feature/ready", pool: null },
+			{ path: `${root}__legacy`, branch: "feature/legacy", pool: null },
 		],
 	});
 	expect(list.mock.calls).toEqual([[root]]);
 	expect(await memory.list(root)).toHaveLength(REGISTERED_WORKTREES);
 });
 
-test("list annotates locked pool slots", async () => {
+test("list preserves locked state on an ordinary worktree", async () => {
 	const deps = createPolicyDeps({
 		worktrees: createMemoryWorktreeInventory({
 			repositories: [
@@ -140,12 +137,11 @@ test("list annotates locked pool slots", async () => {
 					aliases: [],
 					worktrees: [
 						worktreeFixture(root, { canonical: true }),
-						worktreeFixture(`${root}__feat1`, {
-							branch: "wk-pool/feat1",
-							branchRef: "refs/heads/wk-pool/feat1",
+						worktreeFixture(`${root}__locked`, {
+							branch: "feature/locked",
+							branchRef: "refs/heads/feature/locked",
 							locked: true,
-							lockReason: "keep slot",
-							pool: { index: 1, placeholder: true },
+							lockReason: "keep worktree",
 						}),
 					],
 				},
@@ -153,11 +149,12 @@ test("list annotates locked pool slots", async () => {
 		}),
 	});
 	const text = await dispatch("list", ["--cwd", root], deps);
-	expect(text.stdout).toContain("[pool:free]");
+	expect(text.stdout).toContain("[feature/locked]");
 	const result = await dispatch("list", ["--cwd", root, "--json"], deps);
-	expect(JSON.parse(result.stdout ?? "{}").worktrees[SLOT_INDEX]).toMatchObject({
+	expect(JSON.parse(result.stdout ?? "{}").worktrees[LINKED_WORKTREE_INDEX]).toMatchObject({
 		locked: true,
-		lock_reason: "keep slot",
+		lock_reason: "keep worktree",
+		pool: null,
 	});
 });
 

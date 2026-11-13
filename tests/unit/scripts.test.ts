@@ -2,20 +2,11 @@ import { expect, test } from "bun:test";
 import { generatePostCreateScript } from "../../src/domain/worktree.ts";
 
 // The emitted shell text is a public contract consumed by the Nushell wrapper.
-test.each([
-	{ created: "/tmp/repo__feature", marker: "", name: "regular", pooled: false },
-	{
-		created: "/tmp/repo__feat1",
-		marker: ': > "$(git -C "$WK_CREATED" rev-parse --git-path wk-pool-initialized)"\n',
-		name: "pooled",
-		pooled: true,
-	},
-])("generates the $name bootstrap script", ({ pooled, created, marker }) => {
+test("generates the bootstrap script", () => {
 	expect(
 		generatePostCreateScript({
 			command: "echo ready",
-			created,
-			pooled,
+			created: "/tmp/repo__feature",
 			projectName: "app",
 			root: "/tmp/repo",
 		}),
@@ -23,11 +14,10 @@ test.each([
 		`#!/usr/bin/env bash\n` +
 			`set -euo pipefail\n` +
 			`export WK_ROOT='/tmp/repo'\n` +
-			`export WK_CREATED='${created}'\n` +
+			`export WK_CREATED='/tmp/repo__feature'\n` +
 			`echo 'project: app'\n` +
 			`cd "$WK_CREATED"\n` +
-			`echo ready\n` +
-			`${marker}`,
+			`echo ready\n`,
 	);
 });
 
@@ -39,7 +29,6 @@ test.each([
 		generatePostCreateScript({
 			command: 'echo "$WK_CREATED"',
 			created: `${root}__feature`,
-			pooled: false,
 			projectName: "app",
 			root,
 		}),

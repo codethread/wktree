@@ -225,30 +225,6 @@ export async function resolveOfflineDefaultBase(refs: LocalGitRefs): Promise<str
 	return requireCommit(await refs.commit(ref), "local default branch", ref);
 }
 
-/**
- * Prefer the cached origin default over the local default for offline pool reset.
- * Use an explicit base only if no default is designated or both default refs are absent.
- * Read failures and unresolvable selected refs fail instead of falling back.
- * Reads are sequential observations, not an atomic snapshot.
- */
-export async function resolveOfflinePoolResetCommit(
-	refs: LocalGitRefs,
-	base: string | null,
-): Promise<string> {
-	const trunk = await refs.defaultBranch();
-	if (
-		trunk &&
-		((await refs.hasRef(`refs/remotes/origin/${trunk}`)) ||
-			(await refs.hasRef(`refs/heads/${trunk}`)))
-	) {
-		return resolveOfflineDefaultBase(refs);
-	}
-	if (base) {
-		return resolveLocalBaseCommit(refs, base);
-	}
-	return resolveOfflineDefaultBase(refs);
-}
-
 export async function resolveLocalBaseCommit(refs: LocalGitRefs, base: string): Promise<string> {
 	const ref = await resolveBaseRef(refs, base);
 	return requireCommit(await refs.commit(ref), "--base", ref);
@@ -299,24 +275,6 @@ export async function resolveBaseRef(refs: LocalGitRefs, base: string): Promise<
 		return `refs/remotes/origin/${base}`;
 	}
 	return requireCommit(await refs.commit(base), "--base", base);
-}
-
-export async function assertBranchHasMergedUpstream(
-	git: GitRunner,
-	root: string,
-	branch: string,
-): Promise<void> {
-	const upstream = await readBranchUpstream(git, root, branch);
-	if (upstream.exitCode !== EXIT_CODES.SUCCESS || upstream.stdout.trim() === "") {
-		throw new UnmergedBranchError(`branch ${branch} has no upstream; pass --force to recycle`);
-	}
-	const upstreamRef = upstream.stdout.trim();
-	const merged = await git.runRaw(["-C", root, "merge-base", "--is-ancestor", branch, upstreamRef]);
-	if (merged.exitCode !== EXIT_CODES.SUCCESS) {
-		throw new UnmergedBranchError(
-			`branch ${branch} is not merged to ${upstreamRef}; pass --force to recycle`,
-		);
-	}
 }
 
 export async function assertBranchIntegratedInto(options: {

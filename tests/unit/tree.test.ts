@@ -7,38 +7,20 @@ import { buildWorktreeTree } from "../../src/domain/worktree.ts";
 const absent = null;
 const worktrees: Worktree[] = [
 	{ path: "/repo", head: "D", branch: "trunk", canonical: true, pool: absent },
-	{
-		path: "/repo__feat1",
-		head: "A",
-		branch: "wk-pool/feat1",
-		canonical: false,
-		pool: { index: 1, placeholder: true },
-	},
-	{
-		path: "/repo__feat2",
-		head: "B",
-		branch: "wk-pool/feat2",
-		canonical: false,
-		pool: { index: 2, placeholder: true },
-	},
+	{ path: "/repo/feature-a", head: "A", branch: "feature/a", canonical: false, pool: absent },
+	{ path: "/repo/feature-b", head: "B", branch: "feature/b", canonical: false, pool: absent },
 	{ path: "/repo/old", head: "B", branch: "old", canonical: false, pool: absent },
 	{ path: "/repo/parent", head: "P", branch: "parent", canonical: false, pool: absent },
 	{
-		path: "/repo__feat3",
+		path: "/repo/at-parent",
 		head: "P",
-		branch: "wk-pool/feat3",
+		branch: "feature/at-parent",
 		canonical: false,
-		pool: { index: 3, placeholder: true },
+		pool: absent,
 	},
 	{ path: "/repo/child", head: "C", branch: "child", canonical: false, pool: absent },
 	{ path: "/repo/sibling", head: "Q", branch: "sibling", canonical: false, pool: absent },
-	{
-		path: "/repo__feat4",
-		head: "R",
-		branch: "wk-pool/feat4",
-		canonical: false,
-		pool: { index: 4, placeholder: true },
-	},
+	{ path: "/repo/stack", head: "R", branch: "stack", canonical: false, pool: absent },
 ].map((worktree) =>
 	Object.assign(worktree, {
 		branchRef: `refs/heads/${worktree.branch}`,
@@ -51,25 +33,21 @@ const worktrees: Worktree[] = [
 	}),
 );
 
-test("free members stay flat while an active member at the same HEAD can parent a stack #test-694", () => {
+test("every worktree participates in inferred feature stacks", () => {
 	expect(formatWorktreeTree(buildTree())).toMatchInlineSnapshot(`
 	  "Worktrees (default-branch groups; inferred feature stacks, not creation history)
 	  └── trunk [canonical] [default]
-	      ├── old [0 ahead, 1 behind]
-	      ├── parent [1 ahead, 2 behind]
-	      │   └── child [3 ahead, 2 behind]
+	      ├── feature/a [0 ahead, 2 behind]
+	      ├── feature/b = old [same HEAD] [0 ahead, 1 behind]
+	      ├── parent = feature/at-parent [same HEAD] [1 ahead, 2 behind]
+	      │   └── stack [2 ahead, 2 behind]
+	      │       └── child [3 ahead, 2 behind]
 	      └── sibling [1 ahead, 1 behind]
-
-	  Free pool slots (relative to default branch)
-	  ├── wk-pool/feat1 [pool:free] [0 ahead, 2 behind]
-	  ├── wk-pool/feat2 [pool:free] [0 ahead, 1 behind]
-	  ├── wk-pool/feat3 [pool:free] [1 ahead, 2 behind]
-	  └── wk-pool/feat4 [pool:free] [2 ahead, 2 behind]
 	  "
 	`);
 });
 
-test("JSON preserves equal-HEAD inventory but infers only active feature parents", () => {
+test("JSON preserves all equal-HEAD worktrees and infers their feature parents", () => {
 	const payload = toTreePayload(buildTree());
 	expect(payload.default_branch).toEqual({ branch: "trunk", ref: "refs/heads/trunk", head: "D" });
 	expect(
@@ -80,15 +58,15 @@ test("JSON preserves equal-HEAD inventory but infers only active feature parents
 	).toEqual(worktrees.map((worktree) => worktree.path).toSorted());
 	expect(payload.nodes.find((node) => node.id === "P")).toMatchObject({
 		comparison: { kind: "related", ahead: 1, behind: 2 },
-		worktrees: [{ branch: "parent" }, { branch: "wk-pool/feat3" }],
+		worktrees: [{ branch: "parent" }, { branch: "feature/at-parent" }],
 		parentage: { kind: "unknown", reason: "no_ancestor" },
 	});
 	expect(payload.nodes.find((node) => node.id === "C")).toMatchObject({
-		parentage: { kind: "inferred", head: "P" },
+		parentage: { kind: "inferred", head: "R" },
 	});
 	expect(
 		payload.nodes.filter((node) => node.parentage.kind === "inferred").map((node) => node.id),
-	).toEqual(["C"]);
+	).toEqual(["C", "R"]);
 });
 
 function buildTree() {

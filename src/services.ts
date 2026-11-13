@@ -6,7 +6,6 @@ import type {
 	WorktreeLocation,
 } from "./domain/config.ts";
 import type { Multiplexer } from "./integrations/multiplexer.ts";
-import type { SkillProvider } from "skills-handler";
 import type { WorktreeInventory } from "./git/worktrees.ts";
 
 export interface GitResult {
@@ -110,8 +109,6 @@ export interface PickerOptions {
 export interface PickerService {
 	/** Select one of the supplied items. */
 	pick: (items: PickerItem[], header: string, options?: PickerOptions) => Promise<PickerItem>;
-	/** Ask whether the user accepts the described operation. */
-	confirm: (prompt: string) => Promise<boolean>;
 }
 
 export interface ProgressReporter {
@@ -129,8 +126,6 @@ export interface CdDirective {
 }
 
 export interface Deps {
-	/** Bundled instruction catalogue and supporting resource reads. */
-	skills: SkillProvider;
 	/** Git process boundary. */
 	git: GitRunner;
 	/**
@@ -144,7 +139,7 @@ export interface Deps {
 	files: WorkspaceFiles;
 	/** Bootstrap and preflight execution. */
 	hooks: HookRunner;
-	/** Interactive selection and confirmation. */
+	/** Interactive worktree selection. */
 	picker: PickerService;
 	/** Terminal multiplexer session control; the null implementation outside one. */
 	multiplexer: Multiplexer;
@@ -152,11 +147,4 @@ export interface Deps {
 	cdDirective: CdDirective;
 	/** Command diagnostics and hook output. */
 	progress: ProgressReporter;
-	/** Time source for human-readable commit ages. */
-	clock: ClockService;
-}
-
-export interface ClockService {
-	/** Current Unix time in milliseconds. */
-	now: () => number;
 }

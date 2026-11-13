@@ -21,7 +21,7 @@ async function prepareFinish(branch: string, policy = "") {
 	return { remote, root, worktreePath };
 }
 
-test("removes a non-pooled source worktree after finish when cleanup is enabled #test-225", async () => {
+test("removes a source worktree after finish when cleanup is enabled #test-225", async () => {
 	const { root, worktreePath } = await prepareFinish(
 		"feature/remove-after-finish",
 		"[project.finish]\nremove_worktree = true\n",

@@ -6,7 +6,6 @@ import type { Worktree } from "../domain/worktree.ts";
 const REF_HEADS_PREFIX = "refs/heads/";
 const ORIGIN_REF_PREFIX = "refs/remotes/origin/";
 const UNKNOWN_HEAD = "(unknown)";
-const POOL_SLOT_PATTERN = /(?:__feat|[/\\]\.(?:worktrees|wktree)[/\\]feat)(?<slot>\d+)$/u;
 const HEAD_BRANCH_PATTERN = /^\s*HEAD branch:\s*(?<branch>\S+)\s*$/u;
 const BRANCH_LIST_MARKER = /^[*+]\s*/u;
 const PORCELAIN_RECORD_SEPARATOR = /\n{2,}/u;
@@ -23,8 +22,8 @@ interface RecordFields {
 export interface WorktreeInventory {
 	/**
 	 * Return fresh, independently mutable records for the repository containing cwd, in Git's order.
-	 * Preserve parsed Worktree metadata, including bare/unborn entries, flags, nulls and pool identity.
-	 * Read only: no config loading, filtering, sorting, slot synthesis or repair.
+	 * Preserve parsed Worktree metadata, including bare/unborn entries, flags and nulls.
+	 * Read only: no config loading, filtering, sorting, worktree synthesis or repair.
 	 * Failures reject; separate reads need not observe the same repository state.
 	 */
 	list: (cwd: string) => Promise<Worktree[]>;
@@ -110,18 +109,6 @@ function localBranchName(branchRef: string | null): string | null {
 	return branchRef.slice(REF_HEADS_PREFIX.length);
 }
 
-function poolIdentity(path: string, branchRef: string | null): Worktree["pool"] {
-	const slot = POOL_SLOT_PATTERN.exec(path)?.groups?.slot;
-	if (slot === undefined) {
-		// oxlint-disable-next-line unicorn/no-null -- Absent Git metadata is an explicit-null public parser contract.
-		return null;
-	}
-	return {
-		index: Number(slot),
-		placeholder: branchRef === `refs/heads/wk-pool/feat${slot}`,
-	};
-}
-
 function parseRecord(record: string, canonical: boolean): Worktree {
 	const { attributes, flags } = splitRecordLines(record);
 	// oxlint-disable-next-line unicorn/no-null -- Absent Git metadata is an explicit-null public parser contract.
@@ -146,7 +133,8 @@ function parseRecord(record: string, canonical: boolean): Worktree {
 		lockReason,
 		locked: flags.has("locked") || lockReason !== null,
 		path,
-		pool: poolIdentity(path, branchRef),
+		// oxlint-disable-next-line unicorn/no-null -- Retained Worktree field; pool inventory was removed.
+		pool: null,
 		prunable: flags.has("prunable") || prunableReason !== null,
 		prunableReason,
 	};

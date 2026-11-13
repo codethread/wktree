@@ -56,40 +56,10 @@ interface ReadyRemovePayload {
 	kind: "ready";
 	/** Checkout selected or created by the operation. */
 	worktree_path: string;
-	/** Whether the directory was removed rather than recycled. */
+	/** Whether cleanup removed the checkout directory. */
 	removed: boolean;
 	/** Session identity derived from the checkout path. */
 	session: SessionInfo;
-}
-
-interface PoolFullCandidate {
-	/** One-based fixed slot number. */
-	slot: number;
-	/** Checkout path associated with the session or candidate. */
-	path: string;
-	/** Requested or checked-out branch name. */
-	branch: string | null;
-	/** Whether the slot contains uncommitted changes. */
-	dirty: boolean;
-	/** Number of commits ahead of its upstream. */
-	ahead: number;
-	/** Whether the branch has no upstream. */
-	local_only: boolean;
-	/** Timestamp of the last commit, when available. */
-	last_commit_iso: string | null;
-	/** Subject of the last commit, when available. */
-	last_commit_subject: string | null;
-}
-
-export interface PoolFullPayload {
-	/** Discriminator used by CLI and Nushell consumers. */
-	kind: "pool_full";
-	/** Canonical repository root. */
-	root: string;
-	/** Requested or checked-out branch name. */
-	branch: string;
-	/** Occupied initialized slots available for explicit recycling. */
-	candidates: PoolFullCandidate[];
 }
 
 export function toAddPayload(plan: AddPlan): ReadyAddPayload {
@@ -127,7 +97,8 @@ export function toListJson(worktree: Worktree) {
 		lock_reason: worktree.lockReason,
 		locked: worktree.locked,
 		path: worktree.path,
-		pool: worktree.pool,
+		// oxlint-disable-next-line unicorn/no-null -- Retained list JSON field; pool inventory was removed.
+		pool: null,
 		prunable: worktree.prunable,
 		prunable_reason: worktree.prunableReason,
 		session: toSessionInfo(worktree.path),
@@ -161,12 +132,7 @@ export function formatWorktreeTree(tree: WorktreeTree): string {
 	const lines = [
 		"Worktrees (default-branch groups; inferred feature stacks, not creation history)",
 	];
-	appendTreeLines(lines, activeTreeLines(tree), "");
-	const free = freePoolLines(tree.nodes);
-	if (free.length > NO_ITEMS) {
-		lines.push("", "Free pool slots (relative to default branch)");
-		appendTreeLines(lines, free, "");
-	}
+	appendTreeLines(lines, worktreeTreeLines(tree), "");
 	return `${lines.join("\n")}\n`;
 }
 
@@ -197,8 +163,8 @@ export function toConfigExplainPayload(explanation: PolicyExplanation) {
 			copy: explanation.project?.copy ?? [],
 			copy_mode_default: explanation.project?.copyModeDefault ?? "copy",
 			name: projectNameFor(explanation.project, explanation.canonicalRoot),
-			// oxlint-disable-next-line unicorn/no-null -- No configured pool is represented by null in config explain.
-			pool_size: explanation.project?.poolSize ?? null,
+			// oxlint-disable-next-line unicorn/no-null -- Retained config JSON field; pool configuration was removed.
+			pool_size: null,
 		},
 		worktree_location: explanation.worktreeLocation,
 	};
@@ -251,21 +217,16 @@ function toLocalConfigPayload(local: RepositoryConfig | undefined) {
 				strategy: options.finish.strategy,
 			},
 			name: options.name,
-			pool_size: options.poolSize,
+			// oxlint-disable-next-line unicorn/no-null -- Retained config JSON field; pool configuration was removed.
+			pool_size: null,
 			pre_remote_check: options.preRemoteCheck,
 			worktree_location: options.worktreeLocation,
 		},
 	};
 }
 
-function activeTreeLines(tree: WorktreeTree): TreeLine[] {
-	const { defaultBranch } = tree;
-	const nodes = tree.nodes
-		.map((node) => ({
-			...node,
-			worktrees: node.worktrees.filter((worktree) => !worktree.pool?.placeholder),
-		}))
-		.filter((node) => node.worktrees.length);
+function worktreeTreeLines(tree: WorktreeTree): TreeLine[] {
+	const { defaultBranch, nodes } = tree;
 	const displayNode = (node: WorktreeTreeNode): TreeLine => ({
 		label: formatTreeNode(node),
 		children: nodes
@@ -286,25 +247,6 @@ function activeTreeLines(tree: WorktreeTree): TreeLine[] {
 		});
 	}
 	return display;
-}
-
-function freePoolLines(nodes: WorktreeTreeNode[]): TreeLine[] {
-	return nodes
-		.flatMap((node) =>
-			node.worktrees.flatMap((worktree) => {
-				if (!worktree.pool?.placeholder) {
-					return [];
-				}
-				return [
-					{
-						index: worktree.pool.index,
-						label: formatTreeWorktree(worktree) + formatTreeComparison(node.comparison),
-						children: [],
-					},
-				];
-			}),
-		)
-		.toSorted((left, right) => left.index - right.index);
 }
 
 function appendTreeLines(lines: string[], siblings: TreeLine[], prefix: string): void {
@@ -369,7 +311,6 @@ function formatTreeWorktree(worktree: Worktree): string {
 	if (worktree.bare) {
 		labels.push("[bare]");
 	}
-	labels.push(formatPool(worktree.pool));
 	return labels.filter(Boolean).join(" ");
 }
 
@@ -397,16 +338,6 @@ function formatBranch(worktree: Worktree): string {
 	return "";
 }
 
-function formatPool(pool: Worktree["pool"]): string {
-	if (!pool) {
-		return "";
-	}
-	if (pool.placeholder) {
-		return "[pool:free]";
-	}
-	return `[pool:feat${pool.index}]`;
-}
-
 function formatFlags(worktree: Worktree): string {
 	const flags: string[] = [];
 	const branch = formatBranch(worktree);
@@ -415,10 +346,6 @@ function formatFlags(worktree: Worktree): string {
 	}
 	if (worktree.canonical) {
 		flags.push("[canonical]");
-	}
-	const pool = formatPool(worktree.pool);
-	if (pool) {
-		flags.push(pool);
 	}
 	return flags.join(" ");
 }

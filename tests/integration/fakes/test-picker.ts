@@ -1,7 +1,5 @@
 import { PickerCancelled } from "../../../src/errors.ts";
 
-const INITIAL_CONFIRM_CALLS = 0;
-
 interface PickerItem {
 	/** Text displayed to the test caller. */
 	display: string;
@@ -18,15 +16,13 @@ interface TestPickerOptions {
 
 /**
  * Picker double that returns a fixed selection. A null choice models the user
- * cancelling in fzf and must stay supported for the pooled add suites.
+ * cancelling in fzf.
  */
 export interface TestPicker {
 	/** Items supplied by the last pick request. */
 	items: PickerItem[];
 	/** Options supplied by the last pick request. */
 	options: TestPickerOptions | undefined;
-	/** Number of confirmation requests made by the command. */
-	confirmCalls: number;
 	/** Record the candidates and resolve the configured selection. */
 	pick: (
 		/** Candidate worktrees offered to the picker. */
@@ -36,14 +32,10 @@ export interface TestPicker {
 		/** Optional mode that controls interactive UI selection. */
 		options?: TestPickerOptions,
 	) => Promise<PickerItem>;
-	/** Resolve with the configured confirmation choice. */
-	confirm: () => Promise<boolean>;
 }
 
-export function createTestPicker(choice: string | null, confirmed: boolean): TestPicker {
+export function createTestPicker(choice: string | null): TestPicker {
 	const picker: TestPicker = {
-		confirm,
-		confirmCalls: INITIAL_CONFIRM_CALLS,
 		items: [],
 		options: undefined,
 		pick,
@@ -65,10 +57,5 @@ export function createTestPicker(choice: string | null, confirmed: boolean): Tes
 			return Promise.reject(new PickerCancelled());
 		}
 		return Promise.resolve(item);
-	}
-
-	function confirm(): Promise<boolean> {
-		picker.confirmCalls++;
-		return Promise.resolve(confirmed);
 	}
 }

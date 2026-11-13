@@ -7,8 +7,6 @@ import { access, appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "nod
 // Fixture copies and inline config writes use the synchronous filesystem API.
 // oxlint-disable-next-line import/no-nodejs-modules
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-/* oxlint-disable-next-line import/no-nodejs-modules -- fixtures build paths inside their temporary roots */
-import { join, resolve } from "node:path";
 import type { Deps } from "../../src/index";
 import { EXIT_CODES } from "../../src/errors.ts";
 import { afterAll } from "bun:test";
@@ -16,6 +14,8 @@ import { createGitWorktreeInventory } from "../../src/git/worktrees.ts";
 import { createLiveDeps } from "../../src/live-deps.ts";
 import { createTestCdDirective } from "./fakes/test-cd-directive.ts";
 import { createTestMultiplexer } from "./fakes/test-multiplexer.ts";
+/* oxlint-disable-next-line import/no-nodejs-modules -- fixtures build paths inside their temporary roots */
+import { join } from "node:path";
 /* oxlint-disable-next-line import/no-nodejs-modules -- fixtures need the host temporary directory */
 import { tmpdir } from "node:os";
 
@@ -28,7 +28,6 @@ export const deps: Deps = {
 	hooks: { runCommand: liveDeps.hooks.runCommand, runInline: async () => {} },
 	multiplexer: createTestMultiplexer(),
 	picker: {
-		confirm: () => Promise.resolve(true),
 		pick: () => Promise.resolve({ display: "", key: "", preview: "" }),
 	},
 	progress: {
@@ -95,21 +94,16 @@ export function writeConfig(options: {
 	tmp: string;
 	root: string;
 	command: string;
-	poolSize?: number;
 	copyToml?: string;
 }): void {
-	const { tmp, root, command, poolSize, copyToml } = options;
+	const { tmp, root, command, copyToml } = options;
 	const configHome = join(tmp, "config");
 	// oxlint-disable-next-line node/no-sync
 	mkdirSync(configHome, { recursive: true });
-	let poolLine = "";
-	if (poolSize) {
-		poolLine = `pool_size = ${poolSize}\n`;
-	}
 	// oxlint-disable-next-line node/no-sync
 	writeFileSync(
 		join(configHome, "wktree.toml"),
-		`[[project]]\nroot = "${root}"\ncommand = '''\n${command}\n'''\n${poolLine}${copyToml ?? ""}`,
+		`[[project]]\nroot = "${root}"\ncommand = '''\n${command}\n'''\n${copyToml ?? ""}`,
 	);
 	setTestEnv("XDG_CONFIG_HOME", configHome);
 }
@@ -146,30 +140,6 @@ export function useOriginFixture() {
 	};
 
 	return { initRepoWithOrigin };
-}
-
-export async function createPoolSlot(options: {
-	root: string;
-	index: number;
-	branch: string;
-	initialized: boolean;
-	startPoint?: string;
-}): Promise<void> {
-	const { index, initialized, ...worktree } = options;
-	const { root } = worktree;
-	const slotPath = `${root}__feat${index}`;
-	await createWorktree({ ...worktree, path: slotPath });
-	if (initialized) {
-		const result = await run([
-			"git",
-			"-C",
-			slotPath,
-			"rev-parse",
-			"--git-path",
-			"wk-pool-initialized",
-		]);
-		await writeFile(resolve(slotPath, result.stdout.trim()), "");
-	}
 }
 
 /** Prepare a real worktree without running the lifecycle operation under test. */

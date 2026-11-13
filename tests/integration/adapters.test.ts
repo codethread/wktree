@@ -69,7 +69,7 @@ describe("LiveHookRunner", () => {
 		}
 	});
 
-	test("throws HookError with exit code and slot path on failure #test-306", async () => {
+	test("throws HookError with exit code and worktree path on failure #test-306", async () => {
 		const script = join(tmp, "hook.sh");
 		await writeFile(script, "echo bad >&2\nexit 7\n", { mode: EXECUTABLE_MODE });
 		const runner = createLiveHookRunner();
@@ -80,7 +80,7 @@ describe("LiveHookRunner", () => {
 		} catch (error) {
 			expect(error).toBeInstanceOf(HookError);
 			expect((error as HookError).hookExitCode).toBe(HOOK_FAILURE_CODE);
-			expect((error as HookError).slotPath).toBe(tmp);
+			expect((error as HookError).worktreePath).toBe(tmp);
 		}
 	});
 });

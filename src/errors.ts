@@ -20,8 +20,6 @@ export interface FailureContext {
 	branch?: string | undefined;
 	/** Checkout selected or created by the operation. */
 	worktree_path?: string | undefined;
-	/** Explicitly selected pool path, when applicable. */
-	slot_path?: string | undefined;
 	/** Setup command exit status, when setup failed. */
 	setup_exit_code?: number | undefined;
 	/** Whether integration is confirmed after a failure; absent when unknown. */
@@ -128,12 +126,6 @@ export class DuplicateBranchError extends BlockedError {
 
 // WktreeError derives the concrete name from new.target, including external subclasses.
 // oxlint-disable-next-line unicorn/custom-error-definition
-export class DirtySlotError extends UnsafeOperationError {
-	override readonly reason = "dirty_slot";
-}
-
-// WktreeError derives the concrete name from new.target, including external subclasses.
-// oxlint-disable-next-line unicorn/custom-error-definition
 export class UnmergedBranchError extends UnsafeOperationError {
 	override readonly reason = "unmerged_branch";
 }
@@ -188,12 +180,6 @@ export class PushRejectedError extends BlockedError {
 
 // WktreeError derives the concrete name from new.target, including external subclasses.
 // oxlint-disable-next-line unicorn/custom-error-definition
-export class ReservedPrefixError extends UsageError {
-	override readonly reason = "reserved_prefix";
-}
-
-// WktreeError derives the concrete name from new.target, including external subclasses.
-// oxlint-disable-next-line unicorn/custom-error-definition
 export class CanonicalRootError extends UnsafeOperationError {
 	override readonly reason = "canonical_root";
 }
@@ -221,14 +207,14 @@ export class HookError extends WktreeError {
 	/** Exit status returned by the setup hook. */
 	hookExitCode: number;
 	/** Worktree path where the setup hook failed. */
-	slotPath: string;
+	worktreePath: string;
 	// WktreeError derives the concrete name from new.target, including external subclasses.
 	// oxlint-disable-next-line unicorn/custom-error-definition
-	constructor(hookExitCode: number, slotPath: string) {
-		super(`hook failed in ${slotPath} (${hookExitCode})`, EXIT_CODES.FAILURE);
+	constructor(hookExitCode: number, worktreePath: string) {
+		super(`hook failed in ${worktreePath} (${hookExitCode})`, EXIT_CODES.FAILURE);
 		this.hookExitCode = hookExitCode;
-		this.slotPath = slotPath;
-		this.context = { setup_exit_code: hookExitCode, worktree_path: slotPath };
+		this.worktreePath = worktreePath;
+		this.context = { setup_exit_code: hookExitCode, worktree_path: worktreePath };
 	}
 }
 

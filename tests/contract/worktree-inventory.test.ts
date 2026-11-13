@@ -14,7 +14,6 @@ import { createMemoryWorktreeInventory } from "./worktree-inventory-fixture.ts";
 import { tmpdir } from "node:os";
 
 const OID_LENGTH = 40;
-const MUTATED_SLOT = 99;
 const READ_FAILURE = 17;
 const git = createLiveGitRunner();
 const identity = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test"];
@@ -124,10 +123,8 @@ test("worktree inventory rejects an actual non-repository and an unknown memory 
 
 // eslint-disable-next-line max-statements -- Follow seed, replacement, fault and recovery observations in order.
 test("memory inventory isolates seeds, replacements, repositories and named failures", async () => {
-	const seedSlot = record("/repo__feat1", "a".repeat(OID_LENGTH), "wk-pool/feat1", {
-		pool: { index: 1, placeholder: true },
-	});
-	const seed = [seedSlot];
+	const seedWorktree = record("/repo__seed", "a".repeat(OID_LENGTH), "feature/seed");
+	const seed = [seedWorktree];
 	const options = {
 		repositories: [
 			{ cwd: "/repo", aliases: ["/repo/subdir"], worktrees: seed },
@@ -137,18 +134,14 @@ test("memory inventory isolates seeds, replacements, repositories and named fail
 	const inventory = createMemoryWorktreeInventory(options);
 	const independent = createMemoryWorktreeInventory(options);
 	const expected = structuredClone(seed);
-	seedSlot.pool!.index = MUTATED_SLOT;
 	seed.push(record("/injected", null, null));
 	await assertObservations(inventory, ["/repo", "/repo/subdir", "/other"], expected);
-	const replacementExpected = record("/changed__feat2", "b".repeat(OID_LENGTH), "topic", {
-		pool: { index: 2, placeholder: false },
-	});
-	const replacementSlot = structuredClone(replacementExpected);
-	const replacement = [replacementSlot];
+	const replacementExpected = record("/changed__topic", "b".repeat(OID_LENGTH), "topic");
+	const replacementWorktree = structuredClone(replacementExpected);
+	const replacement = [replacementWorktree];
 	const earlier = await inventory.list("/repo");
 	inventory.replace("/repo/subdir", replacement);
-	replacementSlot.branch = "mutated";
-	replacementSlot.pool!.index = MUTATED_SLOT;
+	replacementWorktree.branch = "mutated";
 	expect(await inventory.list("/repo")).toEqual([replacementExpected]);
 	expect(earlier).toEqual(expected);
 	await assertObservations(inventory, ["/other"], expected);
@@ -172,9 +165,9 @@ async function createLinkedInventory(root: string, tmp: string, head: string): P
 	const manual = `${tmp}/manual checkout`;
 	const specifications = [
 		{ path: manual, branch: null },
-		{ path: `${root}/.wktree/feat3`, branch: "wk-pool/feat3" },
-		{ path: `${root}/.worktrees/feat2`, branch: "feature/active" },
-		{ path: `${root}__feat1`, branch: "wk-pool/feat1" },
+		{ path: `${root}/.wktree/nested`, branch: "feature/nested" },
+		{ path: `${root}/.worktrees/active`, branch: "feature/active" },
+		{ path: `${root}__linked`, branch: "feature/linked" },
 		{ path: `${root}__prunable`, branch: "gone" },
 		{ path: `${root}__sibling`, branch: "feature/sibling" },
 	];
@@ -204,13 +197,9 @@ async function createLinkedInventory(root: string, tmp: string, head: string): P
 			locked: true,
 			lockReason: "held for review with spaces",
 		}),
-		record(`${root}/.wktree/feat3`, head, "wk-pool/feat3", {
-			pool: { index: 3, placeholder: true },
-		}),
-		record(`${root}/.worktrees/feat2`, head, "feature/active", {
-			pool: { index: 2, placeholder: false },
-		}),
-		record(`${root}__feat1`, head, "wk-pool/feat1", { pool: { index: 1, placeholder: true } }),
+		record(`${root}/.wktree/nested`, head, "feature/nested"),
+		record(`${root}/.worktrees/active`, head, "feature/active"),
+		record(`${root}__linked`, head, "feature/linked"),
 		record(`${root}__prunable`, head, "gone", {
 			prunable: true,
 			prunableReason: "gitdir file points to non-existent location",
@@ -231,10 +220,6 @@ async function assertObservations(
 			observed.reverse();
 			for (const worktree of observed) {
 				worktree.path = "/caller-mutated";
-				if (worktree.pool) {
-					worktree.pool.index = MUTATED_SLOT;
-					worktree.pool.placeholder = !worktree.pool.placeholder;
-				}
 			}
 			expect(await inventory.list(cwd)).toEqual(expected);
 		}),

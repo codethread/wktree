@@ -42,12 +42,11 @@ test.each<{ name: string; toml: string; expected: ProjectConfig[] }>([
 				copy: [],
 				copyModeDefault: "copy",
 				name: "app",
-				poolSize: 5,
 				root: "/home/test/work/app",
 			},
 		],
-		name: "pooled home-relative project",
-		toml: '[[project]]\nname = "app"\nroot = "~/work/app"\ncommand = "yarn install"\npool_size = 5',
+		name: "home-relative project",
+		toml: '[[project]]\nname = "app"\nroot = "~/work/app"\ncommand = "yarn install"',
 	},
 	{
 		expected: [
@@ -56,12 +55,10 @@ test.each<{ name: string; toml: string; expected: ProjectConfig[] }>([
 				copy: [],
 				copyModeDefault: "copy",
 				name: "repo",
-				// eslint-disable-next-line unicorn/no-null -- Non-pooled projects have no fixed slot count.
-				poolSize: null,
 				root: "/work/relative/repo",
 			},
 		],
-		name: "non-pooled cwd-relative project",
+		name: "cwd-relative project",
 		toml: '[[project]]\nroot = "./relative/repo"\ncommand = "echo ready"',
 	},
 	{
@@ -71,8 +68,6 @@ test.each<{ name: string; toml: string; expected: ProjectConfig[] }>([
 				copy: [],
 				copyModeDefault: "copy",
 				name: "one",
-				// eslint-disable-next-line unicorn/no-null -- Non-pooled projects have no fixed slot count.
-				poolSize: null,
 				root: "/tmp/one",
 			},
 			{
@@ -80,19 +75,17 @@ test.each<{ name: string; toml: string; expected: ProjectConfig[] }>([
 				copy: [],
 				copyModeDefault: "copy",
 				name: "two",
-				poolSize: 2,
 				root: "/tmp/two",
 			},
 		],
-		name: "mixed projects",
+		name: "multiple projects",
 		toml:
 			"[[project]]\n" +
 			'root = "/tmp/one"\n' +
 			'command = "echo one"\n' +
 			"[[project]]\n" +
 			'root = "/tmp/two"\n' +
-			'command = "echo two"\n' +
-			"pool_size = 2",
+			'command = "echo two"',
 	},
 ])("parses $name #test-575", ({ toml, expected }) => {
 	expect(parseConfig(toml).projects).toEqual(expected);
@@ -144,27 +137,10 @@ test.each([
 	expect(project).toMatchObject({ copy: expected, copyModeDefault: mode });
 });
 
-test.each([
-	{ message: "root", name: "missing root", toml: '[[project]]\ncommand = "echo ok"' },
-	{
-		message: "pool_size",
-		name: "pool_size zero",
-		toml: '[[project]]\nroot = "/tmp/repo"\ncommand = "x"\npool_size = 0',
-	},
-	{
-		message: "pool_size",
-		name: "pool_size negative",
-		toml: '[[project]]\nroot = "/tmp/repo"\ncommand = "x"\npool_size = -1',
-	},
-	{
-		message: "pool_size",
-		name: "pool_size non-integer",
-		toml: '[[project]]\nroot = "/tmp/repo"\ncommand = "x"\npool_size = 1.5',
-	},
-])("throws ConfigError for $name", ({ toml, message }) => {
-	expect(() => parseConfig(toml)).toThrow(
+test("throws ConfigError when a project root is missing", () => {
+	expect(() => parseConfig('[[project]]\ncommand = "echo ok"')).toThrow(
 		expect.objectContaining({
-			message: expect.stringContaining(message),
+			message: expect.stringContaining("root"),
 			name: ConfigError.name,
 		}),
 	);
@@ -185,7 +161,6 @@ command = "echo two"
 });
 
 test.each([
-	{ extra: "pool_size = 1", name: "pool_size" },
 	{ extra: 'copy = [".env"]', name: "copy" },
 	{ extra: 'copy_mode_default = "symlink"', name: "copy_mode_default" },
 ])("requires command when project uses $name", ({ extra }) => {
@@ -222,7 +197,6 @@ test.each([
 	{ field: "rule", toml: '[rule]\nroot_glob = "/repo"' },
 	{ field: "commmand", toml: '[[rule]]\nroot_glob = "/repo"\ncommmand = "x"' },
 	{ field: "project", toml: 'project = ["/repo"]' },
-	{ field: "pool_siz", toml: '[[project]]\nroot = "/repo"\npool_siz = 2' },
 	{ field: "command", toml: '[[project]]\nroot = "/repo"\ncommand = "   "' },
 	{ field: "copy", toml: '[[project]]\nroot = "/repo"\ncopy = [{ from = "a", to = [] }]' },
 	{
@@ -240,7 +214,7 @@ test.each([
 	);
 });
 
-test("inherited rule command satisfies pooled and copy setup requirement", () => {
+test("inherited rule command satisfies copy setup requirement", () => {
 	const config = parseConfig(`
 [[rule]]
 root_glob = "/tmp/**"
@@ -248,7 +222,6 @@ command = "echo inherited"
 
 [[project]]
 root = "/tmp/repo"
-pool_size = 1
 copy = [".env"]
 `);
 	const [project] = config.projects;
@@ -267,7 +240,6 @@ command = "echo inherited"
 
 [[project]]
 root = "~/link"
-pool_size = 1
 pre_remote_check = "echo check"
 `,
 		{ cwd: "/work", home: "/home", normalizePath },

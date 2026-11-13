@@ -14,7 +14,7 @@ const NO_PREVIEW_CALLS = 0;
 const ONE_PREVIEW_CALL = 1;
 
 function pickDeps(choice: string | null, attached = true) {
-	const picker = createTestPicker(choice, true);
+	const picker = createTestPicker(choice);
 	const multiplexer = createTestMultiplexer(attached);
 	const cdDirective = createTestCdDirective();
 	return {
@@ -141,7 +141,7 @@ describe("wktree pick --open", () => {
 });
 
 test("pick excludes bare entries and marks the most specific current worktree", async () => {
-	const picker = createTestPicker(featurePath, true);
+	const picker = createTestPicker(featurePath);
 	const deps = createPolicyDeps({
 		picker,
 		files: { ...createPolicyDeps().files, normalizePath: (path) => path },

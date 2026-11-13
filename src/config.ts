@@ -91,7 +91,6 @@ function validateRepositorySetup(
 	context: RepositoryConfigContext,
 ): void {
 	const requiresCommand =
-		raw.pool_size !== undefined ||
 		raw.copy_mode_default !== undefined ||
 		(raw.copy !== undefined && raw.copy.length >= MINIMUM_COPY_ENTRIES);
 	if (
@@ -99,7 +98,7 @@ function validateRepositorySetup(
 		resolveEffectiveCommand(config, context.canonicalRoot, context.normalizePath).command === null
 	) {
 		throw new ConfigError(
-			`${resolve(context.canonicalRoot, ".wktree.toml")} requires an effective command for pooled or copy setup`,
+			`${resolve(context.canonicalRoot, ".wktree.toml")} requires an effective command for copy setup`,
 		);
 	}
 }
@@ -201,9 +200,6 @@ function projectRepositoryOptions(
 	if (raw.name !== undefined) {
 		options.name = raw.name;
 	}
-	if (raw.pool_size !== undefined) {
-		options.poolSize = raw.pool_size;
-	}
 	if (raw.copy_mode_default !== undefined) {
 		options.copyModeDefault = raw.copy_mode_default;
 	}
@@ -224,8 +220,6 @@ function buildProject(
 		copy: projectCopy(project.copy, project.copy_mode_default ?? "copy"),
 		copyModeDefault: project.copy_mode_default ?? "copy",
 		name: project.name ?? basename(root),
-		// oxlint-disable-next-line unicorn/no-null -- A project without fixed slots has no pool size.
-		poolSize: project.pool_size ?? null,
 		root,
 		...projectSetup(project),
 		...projectPolicies(project),

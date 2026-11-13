@@ -7,7 +7,6 @@ import type { Worktree } from "../../src/domain/worktree.ts";
  */
 export function createPolicyDeps(overrides: Partial<Deps> = {}): Deps {
 	return {
-		skills: { getSkills: unexpected, getSkillFile: unexpected },
 		git: { run: unexpected, runRaw: unexpected },
 		worktrees: { list: unexpected },
 		config: { read: unexpected, explain: unexpected },
@@ -19,7 +18,7 @@ export function createPolicyDeps(overrides: Partial<Deps> = {}): Deps {
 			writePostCreateScript: unexpected,
 		},
 		hooks: { runInline: unexpected, runCommand: unexpected },
-		picker: { pick: unexpected, confirm: unexpected },
+		picker: { pick: unexpected },
 		multiplexer: {
 			attached: false,
 			open: unexpected,
@@ -28,7 +27,6 @@ export function createPolicyDeps(overrides: Partial<Deps> = {}): Deps {
 		},
 		cdDirective: { write: unexpected },
 		progress: { banner: unexpected, stream: unexpected, error: unexpected },
-		clock: { now: unexpected },
 		...overrides,
 	};
 }

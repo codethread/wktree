@@ -1,4 +1,3 @@
-export { buildPoolState } from "./application/pool.ts";
 export { main } from "./cli.ts";
 export {
 	explainPolicy,

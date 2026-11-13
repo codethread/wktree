@@ -1,4 +1,4 @@
-import { EXIT_CODES, ReservedPrefixError, dispatch } from "../../src/index";
+import { EXIT_CODES, dispatch } from "../../src/index";
 // oxlint-disable-next-line import/no-nodejs-modules -- Integration fixtures exercise real filesystem IO.
 import { basename, join } from "node:path";
 import {
@@ -175,14 +175,4 @@ test("without project config post_create_script_path is null #test-250", async (
 	);
 
 	expect(JSON.parse(result.stdout ?? "{}").post_create_script_path).toBeNull();
-});
-test("rejects reserved pool branch prefix #test-252", async () => {
-	// Reserved branch syntax is refused before repository discovery.
-	const root = "/unused";
-	const { failure } = await dispatch(
-		"add",
-		["--cwd", root, "--branch", "wk-pool/feat1", "--json"],
-		deps,
-	);
-	expect(failure).toBeInstanceOf(ReservedPrefixError);
 });

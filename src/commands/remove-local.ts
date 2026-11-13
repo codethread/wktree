@@ -42,9 +42,6 @@ export async function removeLocalCommand(args: string[], deps: Deps): Promise<Co
 		Object.assign(context, localDeliveryReceipt(delivery), {
 			target_after_oid: delivery.targetOid,
 		});
-		if (delivery.source.pool) {
-			throw new UsageError("--integrated-into-local removes regular task worktrees only");
-		}
 		if (
 			!(await isLocalAncestor({
 				git,

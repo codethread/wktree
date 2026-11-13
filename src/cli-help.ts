@@ -1,8 +1,8 @@
 export const HELP = {
 	add: `
 Use when:
-  Starting work on a branch with repository policy, deterministic paths, pool
-  allocation, copy setup, and the configured setup command.
+  Creating a branch worktree at a deterministic path, with repository policy,
+  configured copies/symlinks, and bootstrap applied before reporting ready.
 
 Notes:
   Without --base, new branches start from the configured policy target. --base
@@ -10,10 +10,6 @@ Notes:
   in the worktree containing --cwd. --base-current is refused for a detached
   HEAD or combined with --base. Setup failure rolls the add back and exits 1
   with reason setup_failed; with --json, setup output is in setup_output.
-  Pooled add prepares only its selected slot, preferring a clean initialized
-  placeholder before one missing slot or clean uninitialized placeholder.
-  --slot can select a missing configured slot. Copy/setup runs once after target
-  branch checkout; unrelated slots stay untouched. ensure prepares the whole pool.
   --no-network requires Git 2.45+. It skips pre_remote_check, fetch and remote
   default discovery. Cached refs still follow add policy: origin_default starts
   at cached origin/<default>; fresh_canonical requires a clean root on default
@@ -22,18 +18,16 @@ Notes:
   With no cached default ref, use the known local default tip; fresh_canonical
   still requires a clean root on default. Missing origin/HEAD metadata or both
   default refs requires --base <local-ref> or --base-current. Explicit bases
-  override default policy and resolve locally. Pool recycling/rollback prefers
-  cached default, then local default, then an explicit base when neither exists.
-  Missing local objects fail instead of downloading them.
+  override default policy and resolve locally. Missing local objects fail
+  instead of downloading them.
   --skip-command independently omits bootstrap, retaining copies/symlinks and
-  safety checks. Cold pooled slots remain uninitialized; existing markers stay.
-  Skips appear in diagnostics with --json. Configured commands and user Git hooks
-  can still contact the network; use --skip-command or intervene as needed.
+  safety checks. Skips appear in diagnostics with --json. Configured commands
+  and user Git hooks can still contact the network; use --skip-command or
+  intervene as needed.
 
 Blocked outcomes:
-  Existing checkouts, stale or dirty canonical roots, pool exhaustion, and unsafe
-  slot states are reported explicitly. JSON kind values include ready, blocked,
-  and pool_full. A pool_full result includes occupied candidates for inspection.
+  Existing checkouts and stale or dirty canonical roots are reported explicitly.
+  Success uses kind ready; refusals use blocked and failures use error.
 `,
 	config: `
 Use subcommands to explain the configuration resolved for a repository.
@@ -48,23 +42,14 @@ Use when:
   the checkout.
 
 Notes:
-  copy targets the non-canonical worktree containing --cwd (or the current directory by default) and refuses the
-  canonical root. Destinations are engine-managed untracked setup paths; reruns
-  replace those paths from their configured sources.
-`,
-	ensure: `
-Use when:
-  Pre-warming an expensive repository's worktree pool before agents or humans
-  request work, repairing the entire pool, or making setup failures visible early.
-  add prepares only the slot it selects; ensure prepares all configured slots.
-
-Notes:
-  Non-pooled repositories have no slots to materialize. Pool initialization runs
-  configured copy/setup so slots are ready for later allocation.
+  copy targets the non-canonical worktree containing --cwd (the current directory
+  by default) and refuses the canonical root. Destinations are engine-managed
+  untracked setup paths; reruns replace them from their configured sources.
+  copy does not run bootstrap or change branches.
 `,
 	explain: `
 Use when:
-  Debugging why add, finish, pools, copy setup, or bootstrap commands behave a
+  Debugging why add, finish, copy setup, or bootstrap commands behave a
   certain way for a repository.
 
 Notes:
@@ -99,9 +84,9 @@ Notes:
   commit-hook failures can leave cleanly merged changes staged.
 
 Cleanup:
-  Configured remove_worktree removes regular worktrees or frees pooled slots only
-  after integration and configured push succeed. Configured delete_branch
-  requires remove_worktree to be enabled in the same effective policy.
+  Configured remove_worktree removes the source worktree only after integration
+  and configured push succeed. Configured delete_branch requires remove_worktree
+  to be enabled in the same effective policy.
 
 Examples:
   wktree finish
@@ -151,15 +136,30 @@ Use when:
 
 Notes:
   Reads Git's worktree inventory without loading config, scanning checkout
-  contents, contacting remotes, or running setup. Missing pool slots are not
-  created; use add or ensure to initialize them. With --json, the payload's
+  contents, contacting remotes, or running setup. With --json, the payload's
   worktrees array holds one item per registered worktree.
 
 Related:
-  status shows pool-focused slot state. path resolves one branch to its expected
-  worktree path.
+  root identifies the protected canonical checkout. path resolves one branch
+  to its worktree path. tree infers feature stacks from local Git ancestry.
 `,
 	overview: `
+Purpose:
+  Manage deterministic Git worktrees, from creation and setup to safe cleanup.
+  add creates and prepares a branch checkout. remove cleans it up without
+  integration. finish integrates into the canonical target, then optionally
+  pushes and cleans up according to repository policy.
+
+Queries and setup:
+  root, list, path and tree inspect repository/worktree identity and ancestry.
+  copy reapplies configured untracked files; config explain shows active policy.
+  integrate delivers reviewed commits to an explicit local feature checkout.
+
+Automation vs interactive use:
+  Scripts and agents call commands directly, use --json where available, and
+  omit --interactive. Only --interactive permits multiplexer focus and shell
+  directory handoffs. shell-init provides the human wk picker wrapper.
+
 Examples:
   wktree add --branch feature/example
   wktree list
@@ -183,9 +183,9 @@ Use when:
   creating, switching, or removing anything.
 
 Notes:
-  Non-pooled repositories use sibling paths based on the canonical root and
-  branch name. Pooled repositories may map active branches to reusable slot
-  paths instead.
+  Returns the actual registered path when the branch is already checked out.
+  Otherwise derives its deterministic sibling or nested path from repository
+  configuration; it does not create a checkout.
 `,
 	pick: `
 Use when:
@@ -205,14 +205,13 @@ Use when:
   Cleaning up branch worktrees after work is done or abandoned. Use --branch for
   a named branch, or --self to remove the worktree containing the global --cwd
   path when a wrapper or agent wants to remove the checkout it is operating in.
-  Pooled removal recycles an existing slot without initializing it or other slots.
 
 Ordinary removal:
   The canonical root is protected. Without --force, removal refuses dirty or
   otherwise ambiguous work. Without --keep-branch, it also refuses ahead,
   local-only, or unmerged branches. --keep-branch removes only the clean
-  checkout/slot occupancy and leaves the branch ref intact. For a clean branch
-  squash-merged by a hosting platform, --integrated-into origin/main fetches the
+  checkout and leaves the branch ref intact. For a clean branch squash-merged
+  by a hosting platform, --integrated-into origin/main fetches the
   target and requires its source-relative changes to be content-equivalent before
   removing both checkout and branch. It cannot be combined with --force or
   --keep-branch.
@@ -224,8 +223,8 @@ Local feature delivery:
   current destination OID after integration. Cleanup proves source ancestry in
   that target, removes the regular task worktree without force, then deletes its
   branch only if the ref still matches the source pin. No upstream or origin
-  history is needed. Pooled sources and --branch, --force, --keep-branch,
-  --integrated-into or --interactive combinations are refused.
+  history is needed. Combining this mode with --branch, --force, --keep-branch,
+  --integrated-into or --interactive is refused.
   Run from a surviving checkout with global --cwd TASK_PATH selecting the source.
   Continue workflow commands from that surviving checkout after removal.
   Failures retain confirmed cleanup_actions, including removal before failed
@@ -247,7 +246,7 @@ Use when:
   generation, default-branch policy, and root-protection checks.
 
 Notes:
-  The canonical root is never removed or recycled by wktree.
+  The canonical root is never removed by wktree.
 `,
 	shellInit: `
 Setup:
@@ -265,21 +264,10 @@ Wrapper mode:
   worktree's sessions. Directory handoffs are written to the file named by
   WKTREE_CD_FILE for the invoking shell wrapper to apply.
 `,
-	status: `
-Use when:
-  Inspecting whether a repository has a pool and the state of its fixed slots.
-  Pooled worktrees retain their directories when remove recycles them for reuse.
-
-Notes:
-  Output is always JSON. hasPool and size describe pool configuration; slots
-  include branch, dirty state, placeholder status, last commit details, and
-  initialization state. Inspection does not initialize missing slots; add or
-  ensure prepares them.
-`,
 	tree: `
 Use when:
-  Viewing worktrees relative to the repository default branch, with inferred
-  feature stacks and a separate flat list of free pool slots.
+  Viewing worktrees relative to the repository default branch, with feature
+  stacks inferred from local commit ancestry.
 
 Notes:
   Discovers the default name from local origin/HEAD, not canonical HEAD or a
@@ -289,8 +277,8 @@ Notes:
   no baseline. The default header can appear even without a checkout.
   Children of the default are baseline groups, not proven ancestry edges.
   Feature nesting uses nearest strict ancestor HEADs with commits outside
-  default history; old default snapshots and free slots cannot parent stacks.
-  Equal active HEADs share a node marked "same HEAD". ? marks ambiguous stacks,
+  default history; old default snapshots cannot parent stacks.
+  Equal HEADs share a node marked "same HEAD". ? marks ambiguous stacks,
   no common ancestor in local history, or no HEAD; these stay separate.
   Ahead/behind counts compare commits with the baseline, not file contents.
   Reads local Git history only (Git 2.45+); no config, setup, or remote access.
@@ -298,6 +286,6 @@ Notes:
   merges and rebases can change the view; it is not branch creation history.
   --json retains kind "tree" and all worktrees in nodes, adding default_branch
   and node comparison metadata. parentage describes feature ancestry only;
-  default grouping and flat free-slot presentation do not assert parentage.
+  default grouping does not assert parentage.
 `,
 };

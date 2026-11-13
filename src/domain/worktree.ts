@@ -1,6 +1,6 @@
-import { DirtySlotError, UsageError } from "../errors.ts";
 // eslint-disable-next-line import/no-nodejs-modules -- Worktree paths are real filesystem paths by contract.
 import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { UsageError } from "../errors.ts";
 import type { WorktreeLocation } from "./config.ts";
 
 const LEGACY_NESTED_WORKTREE_DIR = ".wktree";
@@ -32,49 +32,8 @@ export interface Worktree {
 	prunable: boolean;
 	/** Git's prune explanation, when supplied. */
 	prunableReason: string | null;
-	/** Fixed slot identity inferred from its managed path. */
-	pool: PoolSlotIdentity | null;
-}
-
-export interface PoolSlotIdentity {
-	/** One-based slot number. */
-	index: number;
-	/** Whether the slot currently holds its reserved placeholder branch. */
-	placeholder: boolean;
-}
-
-export interface Slot {
-	/** One-based slot number. */
-	index: number;
-	/** Actual or planned path of the slot. */
-	path: string;
-	/** Whether Git currently lists the slot. */
-	exists: boolean;
-	/** Checked-out local branch, if any. */
-	branch: string | null;
-	/** Whether the slot holds its reserved placeholder branch. */
-	placeholder: boolean;
-	/** Whether Git reports uncommitted changes or cannot read the slot's status. */
-	dirty: boolean;
-	/** Commit timestamp reported by Git, when available. */
-	lastCommitIso: string | null;
-	/** Latest commit subject, when available. */
-	lastCommitSubject: string | null;
-	/** Whether the successful bootstrap marker exists. */
-	initialized: boolean;
-}
-
-export interface PoolState {
-	/** Canonical repository root. */
-	root: string;
-	/** Origin's default branch; empty when no pool is configured. */
-	trunk: string;
-	/** Whether this project uses fixed slots. */
-	hasPool: boolean;
-	/** Configured number of slots. */
-	size: number;
-	/** Latest observations for each configured slot. */
-	slots: Slot[];
+	/** Retained for compatibility; worktree inventory no longer models pools. */
+	pool: null;
 }
 
 export interface AddPlan {
@@ -95,7 +54,7 @@ export interface AddPlan {
 export interface RemovePlan {
 	/** Checkout path selected for cleanup. */
 	worktreePath: string;
-	/** Whether cleanup removed the directory rather than recycling a slot. */
+	/** Whether cleanup removed the worktree directory. */
 	removed: boolean;
 }
 
@@ -108,8 +67,6 @@ export interface PostCreateScriptSpec {
 	created: string;
 	/** Configured Bash setup command. */
 	command: string;
-	/** Whether successful setup should write a pool initialization marker. */
-	pooled: boolean;
 }
 
 export interface CopiedFile {
@@ -179,23 +136,6 @@ export interface WorktreeTreeNode {
 	comparison: TreeComparison | undefined;
 }
 
-/**
- * Route explicit selection independently of initialization.
- * "recycle" delegates safety checks and force handling to the recycler.
- */
-export function explicitSlotAction(
-	slot: Readonly<Pick<Slot, "path" | "exists" | "placeholder" | "dirty">>,
-	force: boolean,
-): "allocate" | "recycle" {
-	if (!slot.exists || (slot.placeholder && !slot.dirty)) {
-		return "allocate";
-	}
-	if (slot.placeholder && !force) {
-		throw new DirtySlotError(`slot ${slot.path} has uncommitted changes; pass --force to recycle`);
-	}
-	return "recycle";
-}
-
 /** Git reports an all-zero HEAD for an unborn branch and no HEAD for a bare entry. */
 export function worktreeCommit(worktree: Worktree): string | undefined {
 	if (worktree.head && !/^0+$/u.test(worktree.head)) {
@@ -204,7 +144,7 @@ export function worktreeCommit(worktree: Worktree): string | undefined {
 	return undefined;
 }
 
-/** Infer feature stacks without turning baseline history or free slots into parents. */
+/** Infer feature stacks only from committed worktrees ahead of the default branch. */
 export function buildWorktreeTree(options: {
 	/** Inventory observed once at the application boundary. */
 	worktrees: Worktree[];
@@ -215,12 +155,11 @@ export function buildWorktreeTree(options: {
 	/** Default-relative observations for each committed HEAD. */
 	comparisons: ReadonlyMap<string, TreeComparison>;
 }): WorktreeTree {
-	const activeHeads = options.worktrees
-		.filter((worktree) => !worktree.pool?.placeholder)
+	const worktreeHeads = options.worktrees
 		.map((worktree) => worktreeCommit(worktree))
 		.filter((head) => head !== undefined);
 	const featureHeads = new Set(
-		activeHeads.filter((head) => {
+		worktreeHeads.filter((head) => {
 			const comparison = options.comparisons.get(head);
 			return comparison?.kind === "related" && comparison.ahead > NO_COMMITS;
 		}),
@@ -267,9 +206,6 @@ export function generatePostCreateScript(spec: PostCreateScriptSpec): string {
 		'cd "$WK_CREATED"',
 		spec.command.trimEnd(),
 	];
-	if (spec.pooled) {
-		lines.push(': > "$(git -C "$WK_CREATED" rev-parse --git-path wk-pool-initialized)"');
-	}
 	return `${lines.join("\n")}\n`;
 }
 
