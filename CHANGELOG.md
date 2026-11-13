@@ -2,6 +2,21 @@
 
 All notable changes to wktree are documented in this file.
 
+## 0.11.0
+
+### Changes
+
+- Remove worktree pools and bundled agent skills (2baf075)
+
+  Wktree now creates ordinary branch worktrees only. Remove pool allocation, recycling, initialization markers and bundled skill assets, and simplify command help and configuration schemas. Existing registered checkouts remain discoverable at their actual paths. Surviving command kinds and JSON fields remain stable, with pool and pool_size fields retained as null.
+
+  - **Breaking:** The pool\_size setting is no longer accepted in global project entries or repository-local configuration.
+  - **Breaking:** The ensure, status and skills commands and add --slot/--force options are removed.
+  - **Breaking:** Previously pooled checkouts are ordinary worktrees. Successful remove or finish cleanup removes their directories instead of recycling slots; tree no longer displays a separate free-slot section.
+  - **Adoption (required):** Remove pool\_size from global wktree.toml project entries and canonical-root .wktree.toml files. Replace pool allocation scripts with add --branch, use list/tree for inventory, and stop calling ensure, status, skills or add --slot/--force. Keep any needed agent instructions outside Wktree.
+  - **Adoption (required):** If you used pools, review existing checkout paths before cleanup: remove and configured finish cleanup now delete the checkout directory rather than preserving a reusable slot. Existing worktrees do not need to be moved.
+  - **Adoption (optional):** Regenerate shell completions after upgrading so removed commands and options are no longer offered.
+
 ## 0.10.2
 
 ### Changes
