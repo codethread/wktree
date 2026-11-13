@@ -5,12 +5,13 @@ import flags from "./src/flags.ts";
 import identityExtension from "@botlake/extension-identity";
 import priming from "./src/priming.ts";
 import references from "./src/references.ts";
+import { ui } from "@botlake/extension-ct-config";
 import work from "./src/work.ts";
 import workAgents from "./src/work-agents.ts";
 
 export const lake = createLake({
 	name: "wktree",
-	minimumCore: "0.2.0",
+	minimumCore: "0.3.2",
 	extensions: [
 		batteriesExtension,
 		identityExtension,
@@ -18,6 +19,7 @@ export const lake = createLake({
 		references,
 		agents,
 		priming,
+		ui,
 		work,
 		workAgents,
 	],
