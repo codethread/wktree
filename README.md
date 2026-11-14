@@ -57,6 +57,10 @@ source ~/.wktree-completion.zsh
 
 Restart zsh to enable completion for commands, nested subcommands, and flags. The script queries the installed `wktree` at tab time, so suggestions follow the current CLI. Branch names and filesystem paths are not suggested.
 
+## Botlake Mail
+
+The repository lake enables direct Mail, registered identity links, and automatic live-agent delivery with five-minute post-stop resumption. Agents use `bl mail` and should inspect delivery status.
+
 ## How it works
 
 `wktree` resolves one checkout as the **canonical root** for a repository. That root is protected and anchors config lookup, default-branch policy, generated paths, and safety checks.

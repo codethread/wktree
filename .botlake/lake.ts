@@ -2,7 +2,7 @@ import agents from "./src/agents.ts";
 import batteriesExtension from "@botlake/extension-batteries";
 import { createLake } from "@botlake/core";
 import flags from "./src/flags.ts";
-import identityExtension from "@botlake/extension-identity";
+import { mailExtensions } from "./src/mail.ts";
 import priming from "./src/priming.ts";
 import references from "./src/references.ts";
 import { ui } from "@botlake/extension-ct-config";
@@ -13,7 +13,7 @@ export const lake = createLake({
 	name: "wktree",
 	extensions: [
 		batteriesExtension,
-		identityExtension,
+		...mailExtensions,
 		flags,
 		references,
 		agents,
